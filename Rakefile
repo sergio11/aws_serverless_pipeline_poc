@@ -6,6 +6,8 @@ BACKEND_ENDPOINT = ENV.fetch("BACKEND_ENDPOINT", "http://localhost:8000")
 BACKEND_SERVICE = ENV.fetch("BACKEND_SERVICE", "backend")
 BACKEND_CONTAINER = ENV.fetch("BACKEND_CONTAINER", "poc-backend")
 BACKEND_DIR = ENV.fetch("BACKEND_DIR", "backend")
+WORKER_SERVICE = ENV.fetch("WORKER_SERVICE", "lambda-worker")
+WORKER_CONTAINER = ENV.fetch("WORKER_CONTAINER", "poc-lambda-worker")
 TERRAFORM_DIR = ENV.fetch("TERRAFORM_DIR", "terraform")
 TERRAFORM_VAR_FILE = ENV.fetch("TERRAFORM_VAR_FILE", "environments/local/terraform.tfvars")
 
@@ -151,6 +153,38 @@ namespace :backend do
   desc "Show backend logs"
   task :logs do
     run_command("podman", "logs", BACKEND_CONTAINER)
+  end
+end
+
+namespace :worker do
+  desc "Build the Lambda-style worker container"
+  task :build do
+    run_command("podman-compose", "-f", COMPOSE_FILE, "build", WORKER_SERVICE)
+  end
+
+  desc "Run worker tests"
+  task test: :build do
+    run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "--no-deps", "-T", WORKER_SERVICE, "pytest", "tests")
+  end
+
+  desc "Process one SQS receive cycle and exit"
+  task run_once: ["floci:start", :build] do
+    run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "-T", WORKER_SERVICE, "python", "handler.py", "--once")
+  end
+
+  desc "Start the polling worker"
+  task start: ["floci:start", :build] do
+    run_command("podman-compose", "-f", COMPOSE_FILE, "up", "-d", WORKER_SERVICE)
+  end
+
+  desc "Show worker container status"
+  task :status do
+    run_command("podman", "ps", "--filter", "name=#{WORKER_CONTAINER}", "--format", "{{.Names}} {{.Status}} {{.Ports}}")
+  end
+
+  desc "Show worker logs"
+  task :logs do
+    run_command("podman", "logs", WORKER_CONTAINER)
   end
 end
 

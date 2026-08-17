@@ -68,3 +68,9 @@ Start the backend container:
 ```powershell
 rake backend:start
 ```
+
+Process pending document events once:
+
+```powershell
+rake worker:run_once
+```

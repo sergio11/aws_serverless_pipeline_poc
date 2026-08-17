@@ -34,4 +34,18 @@ See [docs/runbook.md](docs/runbook.md) for the current local readiness check and
 
 ## Current Status
 
-Phase 0 is in progress. The repository has baseline documentation and safe ignore rules. Terraform and AWS CLI still need to be installed or added to `PATH` before infrastructure phases can be fully validated.
+Phase 1 is implemented and pending review. The repository has baseline documentation, safe ignore rules, and a validated Floci Compose service definition. Terraform and AWS CLI still need to be installed or added to `PATH` before infrastructure phases can be fully validated.
+
+## Quick Start
+
+Start the local AWS emulator:
+
+```powershell
+rake floci:start
+```
+
+Stop it:
+
+```powershell
+rake floci:down
+```

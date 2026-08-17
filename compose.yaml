@@ -1,0 +1,30 @@
+name: aws-local-poc
+
+services:
+  floci:
+    image: ${FLOCI_IMAGE:-floci/floci:1.5.11}
+    container_name: poc-floci
+    ports:
+      - "4566:4566"
+    environment:
+      FLOCI_PORT: "4566"
+      FLOCI_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
+      FLOCI_DEFAULT_ACCOUNT_ID: "000000000000"
+      FLOCI_BASE_URL: http://localhost:4566
+      FLOCI_HOSTNAME: floci
+      FLOCI_STORAGE_MODE: hybrid
+      FLOCI_STORAGE_PERSISTENT_PATH: /app/data
+    volumes:
+      - ./data/floci:/app/data
+    networks:
+      - poc-network
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:4566"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+networks:
+  poc-network:
+    name: poc-network

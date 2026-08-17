@@ -49,3 +49,10 @@ Stop it:
 ```powershell
 rake floci:down
 ```
+
+Provision local AWS-compatible infrastructure:
+
+```powershell
+rake infra:plan
+rake infra:apply
+```

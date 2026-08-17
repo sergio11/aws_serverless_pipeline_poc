@@ -1,0 +1,7 @@
+aws_region            = "eu-west-1"
+aws_endpoint          = "http://localhost:4566"
+aws_access_key_id     = "test"
+aws_secret_access_key = "test"
+environment           = "local"
+project_name          = "poc"
+api_endpoint          = "http://localhost:8000"

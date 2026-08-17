@@ -1,10 +1,16 @@
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+from app.services.documents import DocumentService, InMemoryDocumentStore
+
+
+def create_test_client() -> TestClient:
+    store = InMemoryDocumentStore(bucket_name="test-documents")
+    return TestClient(create_app(document_service=DocumentService(store=store)))
 
 
 def test_health_returns_ok() -> None:
-    client = TestClient(create_app())
+    client = create_test_client()
 
     response = client.get("/health")
 
@@ -13,7 +19,7 @@ def test_health_returns_ok() -> None:
 
 
 def test_create_and_read_document() -> None:
-    client = TestClient(create_app())
+    client = create_test_client()
 
     create_response = client.post(
         "/documents",
@@ -37,7 +43,7 @@ def test_create_and_read_document() -> None:
 
 
 def test_get_document_content() -> None:
-    client = TestClient(create_app())
+    client = create_test_client()
     create_response = client.post(
         "/documents",
         json={"name": "example.txt", "content": "Hello AWS"},
@@ -52,7 +58,7 @@ def test_get_document_content() -> None:
 
 
 def test_unknown_document_returns_404() -> None:
-    client = TestClient(create_app())
+    client = create_test_client()
 
     response = client.get("/documents/missing")
 
@@ -61,7 +67,7 @@ def test_unknown_document_returns_404() -> None:
 
 
 def test_rejects_empty_content() -> None:
-    client = TestClient(create_app())
+    client = create_test_client()
 
     response = client.post("/documents", json={"name": "example.txt", "content": ""})
 

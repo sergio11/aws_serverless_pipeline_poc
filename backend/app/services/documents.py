@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import Protocol
 from uuid import uuid4
 
 from app.domain import Document, DocumentStatus
@@ -6,6 +7,27 @@ from app.domain import Document, DocumentStatus
 
 class DocumentNotFoundError(Exception):
     pass
+
+
+class DocumentStore(Protocol):
+    @property
+    def bucket_name(self) -> str:
+        pass
+
+    def build_object_key(self, document_id: str, filename: str) -> str:
+        pass
+
+    def save(self, document: Document, content: str) -> None:
+        pass
+
+    def get(self, document_id: str) -> Document | None:
+        pass
+
+    def get_content(self, document_id: str) -> str | None:
+        pass
+
+    def publish_created(self, document_id: str) -> None:
+        pass
 
 
 class InMemoryDocumentStore:
@@ -24,6 +46,9 @@ class InMemoryDocumentStore:
     def get_content(self, document_id: str) -> str | None:
         return self._content.get(document_id)
 
+    def publish_created(self, document_id: str) -> None:
+        return None
+
     def build_object_key(self, document_id: str, filename: str) -> str:
         return f"documents/{document_id}/{filename}"
 
@@ -33,7 +58,7 @@ class InMemoryDocumentStore:
 
 
 class DocumentService:
-    def __init__(self, store: InMemoryDocumentStore) -> None:
+    def __init__(self, store: DocumentStore) -> None:
         self._store = store
 
     def create_document(self, name: str, content: str) -> Document:
@@ -48,6 +73,7 @@ class DocumentService:
             created_at=datetime.now(UTC),
         )
         self._store.save(document, content)
+        self._store.publish_created(document.id)
         return document
 
     def get_document(self, document_id: str) -> Document:

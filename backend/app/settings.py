@@ -6,6 +6,8 @@ from dataclasses import dataclass
 class Settings:
     aws_endpoint_url: str
     aws_region: str
+    aws_access_key_id: str
+    aws_secret_access_key: str
     s3_bucket: str
     dynamodb_table: str
     sqs_queue_name: str
@@ -15,6 +17,8 @@ class Settings:
         return cls(
             aws_endpoint_url=os.getenv("AWS_ENDPOINT_URL", "http://localhost:4566"),
             aws_region=os.getenv("AWS_DEFAULT_REGION", "eu-west-1"),
+            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", "test"),
+            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "test"),
             s3_bucket=os.getenv("S3_BUCKET", "poc-documents"),
             dynamodb_table=os.getenv("DYNAMODB_TABLE", "documents"),
             sqs_queue_name=os.getenv("SQS_QUEUE_NAME", "document-events"),

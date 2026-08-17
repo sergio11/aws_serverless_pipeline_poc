@@ -2,6 +2,10 @@ COMPOSE_FILE = ENV.fetch("COMPOSE_FILE", "compose.yaml")
 FLOCI_ENDPOINT = ENV.fetch("FLOCI_ENDPOINT", "http://localhost:4566")
 FLOCI_SERVICE = ENV.fetch("FLOCI_SERVICE", "floci")
 FLOCI_CONTAINER = ENV.fetch("FLOCI_CONTAINER", "poc-floci")
+BACKEND_ENDPOINT = ENV.fetch("BACKEND_ENDPOINT", "http://localhost:8000")
+BACKEND_SERVICE = ENV.fetch("BACKEND_SERVICE", "backend")
+BACKEND_CONTAINER = ENV.fetch("BACKEND_CONTAINER", "poc-backend")
+BACKEND_DIR = ENV.fetch("BACKEND_DIR", "backend")
 TERRAFORM_DIR = ENV.fetch("TERRAFORM_DIR", "terraform")
 TERRAFORM_VAR_FILE = ENV.fetch("TERRAFORM_VAR_FILE", "environments/local/terraform.tfvars")
 
@@ -99,6 +103,57 @@ namespace :infra do
   end
 end
 
+namespace :backend do
+  desc "Build the backend container"
+  task :build do
+    run_command("podman-compose", "-f", COMPOSE_FILE, "build", BACKEND_SERVICE)
+  end
+
+  desc "Run backend tests"
+  task test: :build do
+    run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "--no-deps", "-T", BACKEND_SERVICE, "pytest", "tests")
+  end
+
+  desc "Start the backend service"
+  task up: "floci:start" do
+    run_command("podman-compose", "-f", COMPOSE_FILE, "up", "-d", BACKEND_SERVICE)
+  end
+
+  desc "Wait until the backend health endpoint responds"
+  task :wait do
+    endpoint = "#{BACKEND_ENDPOINT}/health"
+    retries = ENV.fetch("BACKEND_WAIT_RETRIES", "30").to_i
+    delay = ENV.fetch("BACKEND_WAIT_DELAY_SECONDS", "2").to_i
+    ready = false
+
+    1.upto(retries) do |attempt|
+      if system("curl", "-fsS", endpoint, out: File::NULL, err: File::NULL)
+        puts "Backend is ready at #{endpoint}"
+        ready = true
+        break
+      end
+
+      puts "Waiting for backend at #{endpoint} (#{attempt}/#{retries})"
+      sleep delay
+    end
+
+    abort "Backend did not become ready at #{endpoint}" unless ready
+  end
+
+  desc "Start backend and wait until it is ready"
+  task start: [:up, :wait]
+
+  desc "Show backend container status"
+  task :status do
+    run_command("podman", "ps", "--filter", "name=#{BACKEND_CONTAINER}", "--format", "{{.Names}} {{.Status}} {{.Ports}}")
+  end
+
+  desc "Show backend logs"
+  task :logs do
+    run_command("podman", "logs", BACKEND_CONTAINER)
+  end
+end
+
 desc "Start the local AWS emulator"
 task up: "floci:start"
 
@@ -107,3 +162,6 @@ task down: "floci:down"
 
 desc "Provision local AWS-compatible infrastructure"
 task infra: "infra:apply"
+
+desc "Run backend tests"
+task test: "backend:test"

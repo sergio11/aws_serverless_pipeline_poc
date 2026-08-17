@@ -1,0 +1,20 @@
+[project]
+name = "aws-local-poc-backend"
+version = "0.1.0"
+description = "FastAPI backend for the AWS local cloud lab POC."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi==0.139.2",
+    "pydantic==2.13.3",
+    "uvicorn==0.44.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "httpx2==2.9.0",
+    "pytest==9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

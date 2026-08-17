@@ -56,3 +56,15 @@ Provision local AWS-compatible infrastructure:
 rake infra:plan
 rake infra:apply
 ```
+
+Run backend tests:
+
+```powershell
+rake backend:test
+```
+
+Start the backend container:
+
+```powershell
+rake backend:start
+```

@@ -252,7 +252,7 @@ namespace :e2e do
   end
 
   desc "Run end-to-end document workflow tests"
-  task test: ["backend:start", "worker:start", :build] do
+  task test: ["infra:apply", "backend:start", "worker:start", :build] do
     run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "--no-deps", "-T", E2E_SERVICE, "pytest", "tests")
   end
 end

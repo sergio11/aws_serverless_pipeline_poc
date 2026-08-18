@@ -25,16 +25,14 @@ develop -> containerize -> provision -> run -> test -> observe -> destroy -> reb
 ## Local Requirements
 
 - Podman
-- Terraform
+- Terraform (>= 1.8.0)
 - AWS CLI
 - Python
 - Git
 
-See [docs/runbook.md](docs/runbook.md) for the current local readiness check and operational notes.
-
 ## Current Status
 
-Phase 1 is implemented and pending review. The repository has baseline documentation, safe ignore rules, and a validated Floci Compose service definition. Terraform and AWS CLI still need to be installed or added to `PATH` before infrastructure phases can be fully validated.
+**All phases completed.** The repository implements a full local AWS development lifecycle with document management workflow. Terraform provisions local AWS-compatible infrastructure (S3, DynamoDB, SQS) via Floci.
 
 ## Quick Start
 
@@ -105,4 +103,186 @@ Run acceptance checks:
 rake acceptance
 ```
 
-See [docs/acceptance-report.md](docs/acceptance-report.md) for the current acceptance status and remaining tooling gaps.
+## Local Tool Check
+
+| Tool | Status | Notes |
+| --- | --- | --- |
+| Podman | OK | `podman version 5.8.2` |
+| Podman Compose | OK | Validated with `podman-compose -f compose.yaml config` and `up -d floci` |
+| Python | OK | `Python 3.14.5` |
+| Terraform | Required | >= 1.8.0 |
+| AWS CLI | Required | For diagnostics |
+
+All tools must be installed or added to `PATH` before running the full workflow.
+
+## Local AWS Environment
+
+Use dummy credentials only:
+
+```powershell
+$env:AWS_ENDPOINT_URL = "http://localhost:4566"
+$env:AWS_DEFAULT_REGION = "eu-west-1"
+$env:AWS_ACCESS_KEY_ID = "test"
+$env:AWS_SECRET_ACCESS_KEY = "test"
+```
+
+When services run inside Compose, application containers should use:
+
+```text
+AWS_ENDPOINT_URL=http://floci:4566
+```
+
+The host should use:
+
+```text
+AWS_ENDPOINT_URL=http://localhost:4566
+```
+
+## Repository Safety
+
+The repository ignores:
+
+- Local environment files.
+- Python caches.
+- Terraform state.
+- Local emulator data.
+- Logs and temporary files.
+
+Real AWS credentials must never be committed.
+
+## Architecture
+
+### Services
+
+| Service | Description |
+| --- | --- |
+| Floci | Local AWS emulator on port 4566 |
+| Backend | FastAPI REST API for document management |
+| Lambda Worker | SQS polling worker for async processing |
+| E2E Tests | End-to-end workflow validation |
+
+### API Endpoints
+
+```text
+GET  /health
+POST /documents
+GET  /documents/{document_id}
+GET  /documents/{document_id}/content
+```
+
+### AWS Resources (Local)
+
+```text
+S3 bucket:      poc-local-documents
+DynamoDB table: documents
+SQS queue:      document-events
+SQS DLQ:        document-events-dlq
+```
+
+### Document Workflow
+
+```text
+POST /documents
+  -> S3 object
+  -> DynamoDB metadata
+  -> SQS DocumentCreated event
+  -> worker processing
+  -> DynamoDB status PROCESSED
+```
+
+## Testing
+
+Run backend and worker unit/API tests:
+
+```powershell
+rake test:unit
+```
+
+Run the end-to-end document workflow:
+
+```powershell
+rake test:e2e
+```
+
+Run all tests:
+
+```powershell
+rake test
+```
+
+The e2e suite starts Floci, backend, and the polling worker through Rake and verifies that a document reaches `processed`.
+
+## Automation
+
+Rake is the single task entry point for local development and CI.
+
+Check tools:
+
+```powershell
+rake doctor
+```
+
+Validate Compose:
+
+```powershell
+rake compose:config
+```
+
+Build all images:
+
+```powershell
+rake build
+```
+
+Run CI-equivalent validation locally:
+
+```powershell
+rake ci
+```
+
+## Hardening
+
+Run final verification:
+
+```powershell
+rake verify
+```
+
+Backend infrastructure failures are returned as explicit HTTP 500 responses and logged as structured JSON events.
+
+Worker logs are structured JSON events and the worker:
+
+- skips already `PROCESSED` documents;
+- deletes invalid JSON messages;
+- marks failed processing as `FAILED`;
+- tolerates the queue not being ready yet during local startup.
+
+## Acceptance
+
+Run acceptance checks:
+
+```powershell
+rake acceptance
+```
+
+### Acceptance Result
+
+| Area | Status |
+| --- | --- |
+| Local AWS emulator with Floci | OK |
+| Podman Compose topology | OK |
+| FastAPI backend | OK |
+| S3-compatible document storage | OK |
+| DynamoDB-compatible metadata store | OK |
+| SQS-compatible event publication | OK |
+| Lambda-style worker | OK |
+| Unit/API tests | OK |
+| End-to-end workflow test | OK |
+| Rake automation | OK |
+| Structured logs | OK |
+| Error handling hardening | OK |
+| Worker idempotency | OK |
+
+## License
+
+MIT

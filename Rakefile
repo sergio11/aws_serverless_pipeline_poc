@@ -273,6 +273,15 @@ namespace :verify do
   task hardening: ["doctor:tools", "ci", "compose:status"]
 end
 
+namespace :acceptance do
+  desc "Run final POC acceptance checks"
+  task :check do
+    Rake::Task["doctor:tools"].invoke
+    Rake::Task["ci"].invoke
+    puts "Acceptance checks completed. Review docs/acceptance-report.md for remaining tooling gaps."
+  end
+end
+
 desc "Start the local AWS emulator"
 task up: "floci:start"
 
@@ -299,3 +308,6 @@ task ci: ["compose:config", "test:all"]
 
 desc "Run hardening verification"
 task verify: "verify:hardening"
+
+desc "Run final POC acceptance checks"
+task acceptance: "acceptance:check"

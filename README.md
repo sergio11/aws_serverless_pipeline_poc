@@ -98,3 +98,11 @@ Run final hardening verification:
 ```powershell
 rake verify
 ```
+
+Run acceptance checks:
+
+```powershell
+rake acceptance
+```
+
+See [docs/acceptance-report.md](docs/acceptance-report.md) for the current acceptance status and remaining tooling gaps.

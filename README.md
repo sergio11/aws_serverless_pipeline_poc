@@ -19,7 +19,7 @@ develop -> containerize -> provision -> run -> test -> observe -> destroy -> reb
 | 4 | Backend integration with S3, DynamoDB, and SQS | Integration tests against Floci |
 | 5 | Lambda worker or local Lambda-compatible processor | Document status reaches `PROCESSED` |
 | 6 | Unit, integration, and end-to-end test suites | Full test suite |
-| 7 | Makefile, scripts, and optional CI | Reproducible command workflow |
+| 7 | Rake tasks and CI | Reproducible command workflow |
 | 8 | Hardening: errors, idempotency, logs, docs, memory review | Final acceptance checklist |
 
 ## Local Requirements
@@ -79,4 +79,16 @@ Run all automated tests:
 
 ```powershell
 rake test
+```
+
+Run the same validation used by CI:
+
+```powershell
+rake ci
+```
+
+Check required local tools:
+
+```powershell
+rake doctor
 ```

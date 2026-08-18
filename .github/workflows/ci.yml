@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - "feature/**"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+
+      - name: Install Podman Compose
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman python3-pip
+          python3 -m pip install --user podman-compose
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Show tool versions
+        run: |
+          ruby --version
+          rake --version
+          podman --version
+          podman-compose --version
+
+      - name: Run CI
+        run: rake ci

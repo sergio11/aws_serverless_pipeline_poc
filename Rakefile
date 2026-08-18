@@ -19,6 +19,57 @@ def run_command(*args)
   abort "Command failed: #{command}" unless success
 end
 
+def command_available?(command)
+  extensions = ENV.fetch("PATHEXT", "").split(";")
+  extensions = [""] if extensions.empty?
+
+  ENV.fetch("PATH", "").split(File::PATH_SEPARATOR).any? do |path|
+    extensions.any? do |extension|
+      File.executable?(File.join(path, "#{command}#{extension}"))
+    end
+  end
+end
+
+namespace :doctor do
+  desc "Check required local developer tools"
+  task :tools do
+    {
+      "ruby" => "Ruby runtime for Rake tasks",
+      "rake" => "Task runner",
+      "podman" => "Container runtime",
+      "podman-compose" => "Compose runner for Podman",
+      "curl" => "HTTP readiness checks",
+      "terraform" => "Infrastructure provisioning",
+      "aws" => "AWS CLI diagnostics"
+    }.each do |command, purpose|
+      status = command_available?(command) ? "OK" : "MISSING"
+      puts "#{command.ljust(15)} #{status.ljust(8)} #{purpose}"
+    end
+  end
+end
+
+namespace :compose do
+  desc "Validate the Compose file"
+  task :config do
+    run_command("podman-compose", "-f", COMPOSE_FILE, "config")
+  end
+
+  desc "Build all local images"
+  task :build do
+    run_command("podman-compose", "-f", COMPOSE_FILE, "build")
+  end
+
+  desc "Show running POC containers"
+  task :status do
+    run_command("podman", "ps", "--filter", "name=poc-", "--format", "{{.Names}} {{.Status}} {{.Ports}}")
+  end
+
+  desc "Show Compose logs"
+  task :logs do
+    run_command("podman-compose", "-f", COMPOSE_FILE, "logs")
+  end
+end
+
 namespace :floci do
   desc "Validate the Podman Compose configuration"
   task :config do
@@ -223,3 +274,15 @@ task infra: "infra:apply"
 
 desc "Run all tests"
 task test: "test:all"
+
+desc "Check required local developer tools"
+task doctor: "doctor:tools"
+
+desc "Build all local images"
+task build: "compose:build"
+
+desc "Show running POC containers"
+task status: "compose:status"
+
+desc "Run CI validation locally"
+task ci: ["compose:config", "test:all"]

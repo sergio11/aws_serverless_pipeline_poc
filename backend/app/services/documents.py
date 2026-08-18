@@ -9,6 +9,10 @@ class DocumentNotFoundError(Exception):
     pass
 
 
+class DocumentInfrastructureError(Exception):
+    pass
+
+
 class DocumentStore(Protocol):
     @property
     def bucket_name(self) -> str:
@@ -72,18 +76,27 @@ class DocumentService:
             status=DocumentStatus.CREATED,
             created_at=datetime.now(UTC),
         )
-        self._store.save(document, content)
-        self._store.publish_created(document.id)
+        try:
+            self._store.save(document, content)
+            self._store.publish_created(document.id)
+        except Exception as exc:
+            raise DocumentInfrastructureError("document persistence failed") from exc
         return document
 
     def get_document(self, document_id: str) -> Document:
-        document = self._store.get(document_id)
+        try:
+            document = self._store.get(document_id)
+        except Exception as exc:
+            raise DocumentInfrastructureError("document metadata lookup failed") from exc
         if document is None:
             raise DocumentNotFoundError(document_id)
         return document
 
     def get_document_content(self, document_id: str) -> str:
-        content = self._store.get_content(document_id)
+        try:
+            content = self._store.get_content(document_id)
+        except Exception as exc:
+            raise DocumentInfrastructureError("document content lookup failed") from exc
         if content is None:
             raise DocumentNotFoundError(document_id)
         return content

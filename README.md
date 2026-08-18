@@ -92,3 +92,9 @@ Check required local tools:
 ```powershell
 rake doctor
 ```
+
+Run final hardening verification:
+
+```powershell
+rake verify
+```

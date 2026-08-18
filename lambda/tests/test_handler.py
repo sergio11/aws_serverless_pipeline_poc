@@ -110,3 +110,21 @@ def test_sqs_worker_processes_and_deletes_created_event() -> None:
 
     assert processed_count == 1
     assert sqs.deleted == ["receipt-1"]
+
+
+def test_sqs_worker_deletes_invalid_json_message() -> None:
+    processor = DocumentProcessor(FakeS3Client(), FakeDynamoResource(FakeTable(None)), "documents")
+    sqs = FakeSqsClient(
+        [
+            {
+                "Body": "not-json",
+                "ReceiptHandle": "receipt-invalid",
+            }
+        ]
+    )
+    worker = SqsWorker(sqs, "document-events", processor)
+
+    processed_count = worker.run_once()
+
+    assert processed_count == 1
+    assert sqs.deleted == ["receipt-invalid"]

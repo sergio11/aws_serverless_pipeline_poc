@@ -206,6 +206,11 @@ namespace :backend do
   task :logs do
     run_command("podman", "logs", BACKEND_CONTAINER)
   end
+
+  desc "Run backend HTTP smoke check"
+  task smoke: :start do
+    run_command("curl", "-fsS", "#{BACKEND_ENDPOINT}/health")
+  end
 end
 
 namespace :worker do
@@ -263,6 +268,11 @@ namespace :test do
   task all: [:unit, :e2e]
 end
 
+namespace :verify do
+  desc "Run hardening verification"
+  task hardening: ["doctor:tools", "ci", "compose:status"]
+end
+
 desc "Start the local AWS emulator"
 task up: "floci:start"
 
@@ -286,3 +296,6 @@ task status: "compose:status"
 
 desc "Run CI validation locally"
 task ci: ["compose:config", "test:all"]
+
+desc "Run hardening verification"
+task verify: "verify:hardening"

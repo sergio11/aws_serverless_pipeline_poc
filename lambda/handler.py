@@ -1,5 +1,6 @@
 import argparse
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -8,6 +9,21 @@ from typing import Any
 
 import boto3
 from botocore.exceptions import ClientError
+
+
+logger = logging.getLogger("lambda-worker")
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+
+def log_event(level: int, event: str, **fields: Any) -> None:
+    payload = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "level": logging.getLevelName(level),
+        "service": "lambda-worker",
+        "event": event,
+        **fields,
+    }
+    logger.log(level, json.dumps(payload, default=str))
 
 
 class DocumentStatus:
@@ -47,9 +63,11 @@ class DocumentProcessor:
     def process(self, document_id: str) -> str:
         item = self._get_document(document_id)
         if item is None:
+            log_event(logging.INFO, "document_missing", document_id=document_id)
             return "missing"
 
         if item.get("status") == DocumentStatus.PROCESSED:
+            log_event(logging.INFO, "document_already_processed", document_id=document_id)
             return "skipped"
 
         self._update_status(document_id, DocumentStatus.PROCESSING)
@@ -71,9 +89,11 @@ class DocumentProcessor:
                     ":processed_at": processed_at,
                 },
             )
+            log_event(logging.INFO, "document_processed", document_id=document_id, size=len(content))
             return "processed"
-        except Exception:
+        except Exception as exc:
             self._update_status(document_id, DocumentStatus.FAILED)
+            log_event(logging.ERROR, "document_processing_failed", document_id=document_id, reason=str(exc))
             raise
 
     def _get_document(self, document_id: str) -> dict[str, Any] | None:
@@ -104,8 +124,12 @@ class SqsWorker:
                 WaitTimeSeconds=1,
             )
         except ClientError as exc:
-            if exc.response.get("Error", {}).get("Code") in {"AWS.SimpleQueueService.NonExistentQueue", "QueueDoesNotExist"}:
+            if exc.response.get("Error", {}).get("Code") in {
+                "AWS.SimpleQueueService.NonExistentQueue",
+                "QueueDoesNotExist",
+            }:
                 self._queue_url = None
+                log_event(logging.INFO, "queue_not_ready", queue_name=self._queue_name)
                 return 0
             raise
         messages = response.get("Messages", [])
@@ -118,12 +142,20 @@ class SqsWorker:
         return processed_count
 
     def _process_message(self, message: dict[str, Any]) -> None:
-        payload = json.loads(message["Body"])
-        if payload.get("event_type") != "DocumentCreated":
+        try:
+            payload = json.loads(message["Body"])
+        except json.JSONDecodeError:
+            log_event(logging.ERROR, "invalid_message", receipt_handle=message.get("ReceiptHandle"))
             self._delete_message(message)
             return
 
-        self._processor.process(payload["document_id"])
+        if payload.get("event_type") != "DocumentCreated":
+            log_event(logging.INFO, "unsupported_event", event_type=payload.get("event_type"))
+            self._delete_message(message)
+            return
+
+        result = self._processor.process(payload["document_id"])
+        log_event(logging.INFO, "message_processed", document_id=payload["document_id"], result=result)
         self._delete_message(message)
 
     def _delete_message(self, message: dict[str, Any]) -> None:

@@ -1,11 +1,14 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
+from app.logging import log_event
 from app.schemas import (
     CreateDocumentRequest,
     CreateDocumentResponse,
     DocumentResponse,
 )
-from app.services.documents import DocumentNotFoundError, DocumentService
+from app.services.documents import DocumentInfrastructureError, DocumentNotFoundError, DocumentService
 
 router = APIRouter()
 
@@ -28,7 +31,13 @@ def create_document(
     payload: CreateDocumentRequest,
     document_service: DocumentService = Depends(get_document_service),
 ) -> CreateDocumentResponse:
-    document = document_service.create_document(payload.name, payload.content)
+    try:
+        document = document_service.create_document(payload.name, payload.content)
+    except DocumentInfrastructureError as exc:
+        log_event(logging.ERROR, "document_create_failed", reason=str(exc))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document could not be created") from exc
+
+    log_event(logging.INFO, "document_created", document_id=document.id, document_name=document.name)
 
     return CreateDocumentResponse(
         id=document.id,
@@ -45,7 +54,11 @@ def get_document(
     try:
         document = document_service.get_document(document_id)
     except DocumentNotFoundError as exc:
+        log_event(logging.INFO, "document_not_found", document_id=document_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found") from exc
+    except DocumentInfrastructureError as exc:
+        log_event(logging.ERROR, "document_read_failed", document_id=document_id, reason=str(exc))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document could not be read") from exc
 
     return DocumentResponse(
         id=document.id,
@@ -63,6 +76,10 @@ def get_document_content(
     try:
         content = document_service.get_document_content(document_id)
     except DocumentNotFoundError as exc:
+        log_event(logging.INFO, "document_content_not_found", document_id=document_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found") from exc
+    except DocumentInfrastructureError as exc:
+        log_event(logging.ERROR, "document_content_read_failed", document_id=document_id, reason=str(exc))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document content could not be read") from exc
 
     return Response(content=content, media_type="text/plain")

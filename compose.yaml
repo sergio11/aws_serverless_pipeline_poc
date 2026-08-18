@@ -25,6 +25,22 @@ services:
       retries: 12
       start_period: 5s
 
+  floci-ui:
+    image: floci/floci-ui:latest
+    container_name: poc-floci-ui
+    ports:
+      - "4500:4500"
+    environment:
+      FLOCI_ENDPOINT: http://floci:4566
+      AWS_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+    depends_on:
+      floci:
+        condition: service_healthy
+    networks:
+      - poc-network
+
   backend:
     build:
       context: ./backend

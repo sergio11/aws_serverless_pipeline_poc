@@ -138,6 +138,33 @@ The host should use:
 AWS_ENDPOINT_URL=http://localhost:4566
 ```
 
+## Local Console (UI)
+
+A visual web console for browsing and managing AWS resources:
+
+| Component | URL | Description |
+|-----------|-----|-------------|
+| Floci UI | http://localhost:4500 | Console Home, Cloud Explorer |
+
+Start the UI:
+
+```powershell
+rake ui:start
+```
+
+Stop it:
+
+```powershell
+rake ui:down
+```
+
+Features:
+- S3 bucket browser (upload/download/delete objects)
+- DynamoDB table viewer (create/scan/delete items)
+- SQS queue manager (send/receive/delete messages)
+- Lambda function inspector
+- CloudWatch log viewer
+
 ## Repository Safety
 
 The repository ignores:
@@ -157,6 +184,7 @@ Real AWS credentials must never be committed.
 | Service | Description |
 | --- | --- |
 | Floci | Local AWS emulator on port 4566 |
+| Floci UI | Web console for browsing AWS resources on port 4500 |
 | Backend | FastAPI REST API for document management |
 | Lambda Worker | SQS polling worker for async processing |
 | E2E Tests | End-to-end workflow validation |

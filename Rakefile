@@ -2,6 +2,8 @@ COMPOSE_FILE = ENV.fetch("COMPOSE_FILE", "compose.yaml")
 FLOCI_ENDPOINT = ENV.fetch("FLOCI_ENDPOINT", "http://localhost:4566")
 FLOCI_SERVICE = ENV.fetch("FLOCI_SERVICE", "floci")
 FLOCI_CONTAINER = ENV.fetch("FLOCI_CONTAINER", "poc-floci")
+UI_SERVICE = ENV.fetch("UI_SERVICE", "floci-ui")
+UI_CONTAINER = ENV.fetch("UI_CONTAINER", "poc-floci-ui")
 BACKEND_ENDPOINT = ENV.fetch("BACKEND_ENDPOINT", "http://localhost:8000")
 BACKEND_SERVICE = ENV.fetch("BACKEND_SERVICE", "backend")
 BACKEND_CONTAINER = ENV.fetch("BACKEND_CONTAINER", "poc-backend")
@@ -254,6 +256,28 @@ namespace :e2e do
   desc "Run end-to-end document workflow tests"
   task test: ["infra:apply", "backend:start", "worker:start", :build] do
     run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "--no-deps", "-T", E2E_SERVICE, "pytest", "tests")
+  end
+end
+
+namespace :ui do
+  desc "Start the Floci UI console"
+  task start: "floci:start" do
+    run_command("podman-compose", "-f", COMPOSE_FILE, "up", "-d", UI_SERVICE)
+  end
+
+  desc "Stop the Floci UI console"
+  task :down do
+    run_command("podman-compose", "-f", COMPOSE_FILE, "stop", UI_SERVICE)
+  end
+
+  desc "Show Floci UI container status"
+  task :status do
+    run_command("podman", "ps", "--filter", "name=#{UI_CONTAINER}", "--format", "{{.Names}} {{.Status}} {{.Ports}}")
+  end
+
+  desc "Show Floci UI logs"
+  task :logs do
+    run_command("podman", "logs", UI_CONTAINER)
   end
 end
 

@@ -97,11 +97,17 @@ class SqsWorker:
         self._queue_url: str | None = None
 
     def run_once(self) -> int:
-        response = self._sqs.receive_message(
-            QueueUrl=self._get_queue_url(),
-            MaxNumberOfMessages=10,
-            WaitTimeSeconds=1,
-        )
+        try:
+            response = self._sqs.receive_message(
+                QueueUrl=self._get_queue_url(),
+                MaxNumberOfMessages=10,
+                WaitTimeSeconds=1,
+            )
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") in {"AWS.SimpleQueueService.NonExistentQueue", "QueueDoesNotExist"}:
+                self._queue_url = None
+                return 0
+            raise
         messages = response.get("Messages", [])
 
         processed_count = 0

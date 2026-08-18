@@ -8,6 +8,7 @@ BACKEND_CONTAINER = ENV.fetch("BACKEND_CONTAINER", "poc-backend")
 BACKEND_DIR = ENV.fetch("BACKEND_DIR", "backend")
 WORKER_SERVICE = ENV.fetch("WORKER_SERVICE", "lambda-worker")
 WORKER_CONTAINER = ENV.fetch("WORKER_CONTAINER", "poc-lambda-worker")
+E2E_SERVICE = ENV.fetch("E2E_SERVICE", "e2e")
 TERRAFORM_DIR = ENV.fetch("TERRAFORM_DIR", "terraform")
 TERRAFORM_VAR_FILE = ENV.fetch("TERRAFORM_VAR_FILE", "environments/local/terraform.tfvars")
 
@@ -188,6 +189,29 @@ namespace :worker do
   end
 end
 
+namespace :e2e do
+  desc "Build the end-to-end test container"
+  task :build do
+    run_command("podman-compose", "-f", COMPOSE_FILE, "build", E2E_SERVICE)
+  end
+
+  desc "Run end-to-end document workflow tests"
+  task test: ["backend:start", "worker:start", :build] do
+    run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "--no-deps", "-T", E2E_SERVICE, "pytest", "tests")
+  end
+end
+
+namespace :test do
+  desc "Run unit/API tests for backend and worker"
+  task unit: ["backend:test", "worker:test"]
+
+  desc "Run end-to-end tests"
+  task e2e: "e2e:test"
+
+  desc "Run all tests"
+  task all: [:unit, :e2e]
+end
+
 desc "Start the local AWS emulator"
 task up: "floci:start"
 
@@ -197,5 +221,5 @@ task down: "floci:down"
 desc "Provision local AWS-compatible infrastructure"
 task infra: "infra:apply"
 
-desc "Run backend tests"
-task test: "backend:test"
+desc "Run all tests"
+task test: "test:all"

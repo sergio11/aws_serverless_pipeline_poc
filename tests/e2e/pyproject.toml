@@ -1,0 +1,15 @@
+[project]
+name = "aws-local-poc-e2e"
+version = "0.1.0"
+description = "End-to-end tests for the AWS local cloud lab POC."
+requires-python = ">=3.12"
+dependencies = [
+    "boto3==1.43.55",
+    "botocore==1.43.72",
+    "httpx2==2.9.0",
+    "pytest==9.1.1",
+    "s3transfer==0.19.2",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

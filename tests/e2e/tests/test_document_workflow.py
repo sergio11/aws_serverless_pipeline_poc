@@ -1,14 +1,21 @@
 import os
+import subprocess
 import time
 from uuid import uuid4
 
 import httpx2 as httpx
+import pytest
 
 
 BACKEND_ENDPOINT = os.getenv("BACKEND_ENDPOINT", "http://backend:8000")
 
 
 def test_document_workflow_reaches_processed_status() -> None:
+    """Verify the full document lifecycle: POST -> S3 -> DynamoDB -> SQS -> Lambda -> PROCESSED.
+    
+    Processing is asynchronous via Lambda (Floci-managed). This test polls the
+    backend until the document reaches PROCESSED status.
+    """
     unique_name = f"e2e-{uuid4().hex}.txt"
 
     with httpx.Client(timeout=10) as client:
@@ -33,4 +40,22 @@ def test_document_workflow_reaches_processed_status() -> None:
             return
         time.sleep(1)
 
-    raise AssertionError(f"Document {document_id} did not reach processed status")
+    pytest.fail(f"Document {document_id} did not reach processed status")
+
+
+def test_lambda_function_exists() -> None:
+    """Verify the Lambda function is registered in Floci."""
+    result = subprocess.run(
+        [
+            "aws", "lambda", "get-function",
+            "--function-name", "poc-local-document-processor",
+            "--endpoint-url", "http://floci:4566",
+            "--query", "Configuration.FunctionName",
+            "--output", "text",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0
+    assert "poc-local-document-processor" in result.stdout

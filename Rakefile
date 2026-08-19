@@ -10,6 +10,7 @@ BACKEND_CONTAINER = ENV.fetch("BACKEND_CONTAINER", "poc-backend")
 BACKEND_DIR = ENV.fetch("BACKEND_DIR", "backend")
 WORKER_SERVICE = ENV.fetch("WORKER_SERVICE", "lambda-worker")
 WORKER_CONTAINER = ENV.fetch("WORKER_CONTAINER", "poc-lambda-worker")
+LAMBDA_FUNCTION = ENV.fetch("LAMBDA_FUNCTION", "poc-local-document-processor")
 E2E_SERVICE = ENV.fetch("E2E_SERVICE", "e2e")
 TERRAFORM_DIR = ENV.fetch("TERRAFORM_DIR", "terraform")
 TERRAFORM_VAR_FILE = ENV.fetch("TERRAFORM_VAR_FILE", "environments/local/terraform.tfvars")
@@ -157,6 +158,53 @@ namespace :infra do
   task :output do
     run_command("terraform", "-chdir=#{TERRAFORM_DIR}", "output")
   end
+
+  desc "Package Lambda worker into a deployment zip"
+  task :package_lambda do
+    require "fileutils"
+    lambda_dir  = "lambda"
+    output_path = "tmp/lambda/worker.zip"
+
+    FileUtils.mkdir_p("tmp/lambda")
+    FileUtils.rm_f(output_path)
+
+    run_command("bash", "-c", "cd #{lambda_dir} && zip -r ../#{output_path} handler.py requirements.txt -x 'tests/*' '__pycache__/*' '*.pyc'")
+  end
+
+  desc "Upload Lambda zip to S3 on Floci"
+  task upload_lambda: ["floci:start", :package_lambda] do
+    require "json"
+    outputs_json = `terraform -chdir=#{TERRAFORM_DIR} output -json`
+    abort "terraform output failed" unless $?.success?
+    bucket = JSON.parse(outputs_json).dig("s3_bucket", "value")
+
+    run_command(
+      "aws", "--endpoint-url", FLOCI_ENDPOINT,
+      "s3", "cp", "tmp/lambda/worker.zip",
+      "s3://#{bucket}/lambda/document-processor.zip"
+    )
+  end
+
+  desc "Generate .env from Terraform outputs"
+  task :env do
+    require "json"
+    outputs_json = `terraform -chdir=#{TERRAFORM_DIR} output -json`
+    abort "terraform output failed" unless $?.success?
+    outputs = JSON.parse(outputs_json)
+
+    env_content = [
+      "S3_BUCKET=#{outputs.dig('s3_bucket', 'value') || ''}",
+      "DYNAMODB_TABLE=#{outputs.dig('dynamodb_table', 'value') || ''}",
+      "SQS_QUEUE_URL=#{outputs.dig('sqs_queue_url', 'value') || ''}",
+      "SQS_DLQ_URL=#{outputs.dig('sqs_dlq_url', 'value') || ''}",
+    ].join("\n") + "\n"
+
+    File.write(".env", env_content)
+    puts "Generated .env from Terraform outputs"
+  end
+
+  desc "Apply infrastructure, upload Lambda, and generate .env"
+  task deploy: [:apply, :upload_lambda, :env]
 end
 
 namespace :backend do
@@ -247,6 +295,53 @@ namespace :worker do
   end
 end
 
+namespace :lambda do
+  desc "Invoke the Lambda function directly (for testing)"
+  task invoke: "floci:start" do
+    payload = {
+      "Records" => [{
+        "body" => JSON.generate({
+          "event_type" => "DocumentCreated",
+          "document_id" => ENV.fetch("TEST_DOCUMENT_ID", "test-doc")
+        })
+      }]
+    }
+    run_command(
+      "aws", "lambda", "invoke",
+      "--function-name", LAMBDA_FUNCTION,
+      "--endpoint-url", FLOCI_ENDPOINT,
+      "--payload", JSON.generate(payload),
+      "/dev/stdout"
+    )
+  end
+
+  desc "Show Lambda function configuration"
+  task :config do
+    run_command(
+      "aws", "lambda", "get-function",
+      "--function-name", LAMBDA_FUNCTION,
+      "--endpoint-url", FLOCI_ENDPOINT,
+      "--query", "Configuration",
+      "--output", "json"
+    )
+  end
+
+  desc "List event source mappings"
+  task :esm do
+    run_command(
+      "aws", "lambda", "list-event-source-mappings",
+      "--function-name", LAMBDA_FUNCTION,
+      "--endpoint-url", FLOCI_ENDPOINT,
+      "--output", "json"
+    )
+  end
+
+  desc "Package Lambda code for deployment"
+  task :package do
+    run_command("bash", "scripts/package-lambda.sh")
+  end
+end
+
 namespace :e2e do
   desc "Build the end-to-end test container"
   task :build do
@@ -254,7 +349,7 @@ namespace :e2e do
   end
 
   desc "Run end-to-end document workflow tests"
-  task test: ["infra:apply", "backend:start", "worker:start", :build] do
+  task test: ["infra:deploy", "backend:start", :build] do
     run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "--no-deps", "-T", E2E_SERVICE, "pytest", "tests")
   end
 end

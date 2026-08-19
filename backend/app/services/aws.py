@@ -74,6 +74,20 @@ class AwsDocumentStore:
             MessageBody=json.dumps(message),
         )
 
+    def delete(self, document_id: str) -> None:
+        """Elimina un documento de S3 y DynamoDB."""
+        document = self.get(document_id)
+        if document is None:
+            return
+        try:
+            self._s3.delete_object(Bucket=document.bucket, Key=document.object_key)
+        except ClientError:
+            pass
+        try:
+            self._table.delete_item(Key={"id": document_id})
+        except ClientError:
+            pass
+
     def _get_queue_url(self) -> str:
         if self._queue_url is None:
             response = self._sqs.get_queue_url(QueueName=self._queue_name)

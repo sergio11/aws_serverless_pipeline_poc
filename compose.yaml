@@ -87,6 +87,14 @@ services:
       DYNAMODB_TABLE: ${DYNAMODB_TABLE:-documents}
       SQS_QUEUE_NAME: ${SQS_QUEUE_NAME:-document-events}
       WORKER_POLL_INTERVAL_SECONDS: ${WORKER_POLL_INTERVAL_SECONDS:-2}
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     depends_on:
       - floci
     networks:

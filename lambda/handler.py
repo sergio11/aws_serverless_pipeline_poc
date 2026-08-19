@@ -1,7 +1,10 @@
 import argparse
+import http.server
 import json
 import logging
 import os
+import signal
+import threading
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -13,6 +16,34 @@ from botocore.exceptions import ClientError
 
 logger = logging.getLogger("lambda-worker")
 logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+_shutdown_event = threading.Event()
+
+
+def _handle_signal(signum: int, frame: Any) -> None:
+    log_event(logging.INFO, "shutdown_signal_received", signal=signum)
+    _shutdown_event.set()
+
+
+class _HealthHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        if self.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "ok"}).encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format: str, *args: Any) -> None:
+        pass
+
+
+def _start_health_server(port: int = 8080) -> None:
+    server = http.server.HTTPServer(("0.0.0.0", port), _HealthHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
 
 
 def log_event(level: int, event: str, **fields: Any) -> None:
@@ -70,9 +101,14 @@ class DocumentProcessor:
             log_event(logging.INFO, "document_already_processed", document_id=document_id)
             return "skipped"
 
-        self._update_status(document_id, DocumentStatus.PROCESSING)
+        if not self._acquire_processing_lock(document_id):
+            log_event(logging.INFO, "document_being_processed_by_another_worker",
+                      document_id=document_id)
+            return "locked"
 
         try:
+            self._update_status(document_id, DocumentStatus.PROCESSING)
+
             response = self._s3.get_object(Bucket=item["bucket"], Key=item["object_key"])
             content = response["Body"].read()
             processed_at = datetime.now(UTC).isoformat()
@@ -92,9 +128,43 @@ class DocumentProcessor:
             log_event(logging.INFO, "document_processed", document_id=document_id, size=len(content))
             return "processed"
         except Exception as exc:
-            self._update_status(document_id, DocumentStatus.FAILED)
+            try:
+                self._update_status(document_id, DocumentStatus.FAILED)
+            except Exception:
+                log_event(logging.ERROR, "failed_to_set_failed_status", document_id=document_id)
             log_event(logging.ERROR, "document_processing_failed", document_id=document_id, reason=str(exc))
             raise
+        finally:
+            self._release_processing_lock(document_id)
+
+    def _acquire_processing_lock(self, document_id: str) -> bool:
+        """Intenta adquirir lock de procesamiento de forma atómica."""
+        try:
+            self._table.update_item(
+                Key={"id": document_id},
+                UpdateExpression="SET processing_owner = :owner",
+                ConditionExpression="attribute_not_exists(processing_owner) AND #status <> :processed",
+                ExpressionAttributeNames={"#status": "status"},
+                ExpressionAttributeValues={
+                    ":owner": os.environ.get("HOSTNAME", "unknown"),
+                    ":processed": DocumentStatus.PROCESSED,
+                },
+            )
+            return True
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return False
+            raise
+
+    def _release_processing_lock(self, document_id: str) -> None:
+        """Libera el lock de procesamiento."""
+        try:
+            self._table.update_item(
+                Key={"id": document_id},
+                UpdateExpression="REMOVE processing_owner",
+            )
+        except ClientError:
+            pass
 
     def _get_document(self, document_id: str) -> dict[str, Any] | None:
         response = self._table.get_item(Key={"id": document_id})
@@ -243,7 +313,7 @@ def main() -> None:
             }]
         }
         result = lambda_handler(test_event, None)
-        print(json.dumps(result, indent=2))
+        log_event(logging.INFO, "lambda_test_result", result=result)
         return
 
     settings = WorkerSettings.from_environment()
@@ -251,13 +321,20 @@ def main() -> None:
 
     if args.once:
         count = worker.run_once()
-        print(json.dumps({"processed_messages": count}))
+        log_event(logging.INFO, "poll_cycle_once", processed_messages=count)
         return
 
-    while True:
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
+    _start_health_server()
+    log_event(logging.INFO, "worker_started", poll_interval=settings.poll_interval_seconds)
+
+    while not _shutdown_event.is_set():
         count = worker.run_once()
-        print(json.dumps({"processed_messages": count}))
-        time.sleep(settings.poll_interval_seconds)
+        log_event(logging.DEBUG, "poll_cycle", processed_messages=count)
+        _shutdown_event.wait(timeout=settings.poll_interval_seconds)
+
+    log_event(logging.INFO, "worker_stopped")
 
 
 if __name__ == "__main__":

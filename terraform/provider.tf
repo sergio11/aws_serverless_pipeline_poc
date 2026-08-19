@@ -5,7 +5,13 @@ provider "aws" {
   s3_use_path_style           = true
   skip_credentials_validation = true
   skip_metadata_api_check     = true
+
+  # WARNING: Requerido para Floci (localstack) ya que no maneja validación
+  # de account_id. NO usar en producción con AWS real.
+  # Si se necesita AWS real, eliminar esta línea y usar IAM roles o
+  # variables de entorno para credenciales.
   skip_requesting_account_id  = true
+
   skip_region_validation      = true
 
   endpoints {

@@ -1,8 +1,10 @@
+import logging
 from datetime import UTC, datetime
 from typing import Protocol
 from uuid import uuid4
 
 from app.domain import Document, DocumentStatus
+from app.logging import log_event
 
 
 class DocumentNotFoundError(Exception):
@@ -80,6 +82,10 @@ class DocumentService:
             self._store.save(document, content)
             self._store.publish_created(document.id)
         except Exception as exc:
+            try:
+                self._store.delete(document.id)
+            except Exception:
+                log_event(logging.WARNING, "s3_cleanup_failed", document_id=document_id)
             raise DocumentInfrastructureError("document persistence failed") from exc
         return document
 

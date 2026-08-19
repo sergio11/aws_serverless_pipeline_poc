@@ -24,7 +24,7 @@ class FakeTable:
 
     def update_item(self, **kwargs) -> None:
         self.updates.append(kwargs)
-        values = kwargs["ExpressionAttributeValues"]
+        values = kwargs.get("ExpressionAttributeValues", {})
         if self.item is not None:
             if ":status" in values:
                 self.item["status"] = values[":status"]
@@ -32,6 +32,11 @@ class FakeTable:
                 self.item["size"] = values[":size"]
             if ":processed_at" in values:
                 self.item["processed_at"] = values[":processed_at"]
+            if "processing_owner" in kwargs.get("UpdateExpression", ""):
+                if "REMOVE" in kwargs.get("UpdateExpression", ""):
+                    self.item.pop("processing_owner", None)
+                elif ":owner" in values:
+                    self.item["processing_owner"] = values[":owner"]
 
 
 class FakeDynamoResource:

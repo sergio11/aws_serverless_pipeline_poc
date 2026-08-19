@@ -3,7 +3,7 @@ import subprocess
 import time
 from uuid import uuid4
 
-import httpx2 as httpx
+import httpx
 import pytest
 
 

@@ -1,4 +1,3 @@
-boto3==1.43.55
-botocore==1.43.72
-pytest==9.1.1
+boto3==1.43.74
+botocore==1.43.74
 s3transfer==0.19.2

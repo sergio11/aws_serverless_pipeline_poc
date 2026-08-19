@@ -1,8 +1,6 @@
+boto3==1.43.74
+botocore==1.43.74
 fastapi==0.139.2
-boto3==1.43.55
-botocore==1.43.72
-httpx2==2.9.0
 pydantic==2.13.3
-pytest==9.1.1
 s3transfer==0.19.2
 uvicorn==0.44.0

@@ -4,8 +4,8 @@ version = "0.1.0"
 description = "Lambda-style document worker for the AWS local cloud lab POC."
 requires-python = ">=3.12"
 dependencies = [
-    "boto3==1.43.55",
-    "botocore==1.43.72",
+    "boto3==1.43.74",
+    "botocore==1.43.74",
     "s3transfer==0.19.2",
 ]
 

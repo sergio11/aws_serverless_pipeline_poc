@@ -4,8 +4,8 @@ version = "0.1.0"
 description = "FastAPI backend for the AWS local cloud lab POC."
 requires-python = ">=3.12"
 dependencies = [
-    "boto3==1.43.55",
-    "botocore==1.43.72",
+    "boto3==1.43.74",
+    "botocore==1.43.74",
     "fastapi==0.139.2",
     "pydantic==2.13.3",
     "s3transfer==0.19.2",
@@ -14,7 +14,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = [
-    "httpx2==2.9.0",
+    "httpx==0.28.1",
     "pytest==9.1.1",
 ]
 

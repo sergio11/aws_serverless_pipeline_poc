@@ -6,6 +6,8 @@ locals {
   queue_name  = "document-events"
   dlq_name    = "document-events-dlq"
 
+  lambda_function_name = "${local.name_prefix}-document-processor"
+
   common_tags = {
     Project     = var.project_name
     Environment = var.environment

@@ -12,4 +12,6 @@ COPY handler.py .
 COPY tests ./tests
 COPY pyproject.toml .
 
+# Polling mode (fallback when Floci Lambda is unavailable).
+# For Lambda mode, code is deployed via Terraform to Floci directly.
 CMD ["python", "handler.py", "--poll"]

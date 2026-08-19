@@ -1,6 +1,6 @@
 # AWS Local Cloud Lab POC
 
-Local-first AWS learning lab based on FastAPI, Terraform, Podman, Floci, S3, DynamoDB, SQS, and Lambda-style asynchronous processing.
+Local-first AWS learning lab based on FastAPI, Terraform, Podman, Floci, S3, DynamoDB, SQS, and Lambda-based asynchronous processing.
 
 The goal is to build a reproducible local platform that exercises the same development cycle used in AWS projects:
 
@@ -186,7 +186,7 @@ Real AWS credentials must never be committed.
 | Floci | Local AWS emulator on port 4566 |
 | Floci UI | Web console for browsing AWS resources on port 4500 |
 | Backend | FastAPI REST API for document management |
-| Lambda Worker | SQS polling worker for async processing |
+| Lambda Function | SQS-triggered Lambda function for async processing |
 | E2E Tests | End-to-end workflow validation |
 
 ### API Endpoints
@@ -214,7 +214,7 @@ POST /documents
   -> S3 object
   -> DynamoDB metadata
   -> SQS DocumentCreated event
-  -> worker processing
+  -> Lambda processing
   -> DynamoDB status PROCESSED
 ```
 
@@ -238,7 +238,7 @@ Run all tests:
 rake test
 ```
 
-The e2e suite starts Floci, backend, and the polling worker through Rake and verifies that a document reaches `processed`.
+The e2e suite starts Floci, backend, and the Lambda function through Rake and verifies that a document reaches `processed`.
 
 ## Automation
 
@@ -303,7 +303,7 @@ rake acceptance
 | S3-compatible document storage | OK |
 | DynamoDB-compatible metadata store | OK |
 | SQS-compatible event publication | OK |
-| Lambda-style worker | OK |
+| Lambda function | OK |
 | Unit/API tests | OK |
 | End-to-end workflow test | OK |
 | Rake automation | OK |

@@ -171,7 +171,10 @@ class SqsWorker:
         return self._queue_url
 
 
-def build_processor(settings: WorkerSettings) -> DocumentProcessor:
+def create_processor(settings: WorkerSettings | None = None) -> DocumentProcessor:
+    if settings is None:
+        settings = WorkerSettings.from_environment()
+
     client_config = {
         "endpoint_url": settings.aws_endpoint_url,
         "region_name": settings.aws_region,
@@ -195,28 +198,53 @@ def build_worker(settings: WorkerSettings) -> SqsWorker:
     return SqsWorker(
         sqs_client=boto3.client("sqs", **client_config),
         queue_name=settings.sqs_queue_name,
-        processor=build_processor(settings),
+        processor=create_processor(settings),
     )
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
-    processor = build_processor(WorkerSettings.from_environment())
+    processor = create_processor()
     results = []
 
     for record in event.get("Records", []):
-        payload = json.loads(record["body"])
+        try:
+            payload = json.loads(record["body"])
+        except (json.JSONDecodeError, KeyError):
+            log_event(logging.WARNING, "invalid_record")
+            results.append({"error": "invalid_record"})
+            continue
+
         if payload.get("event_type") == "DocumentCreated":
             result = processor.process(payload["document_id"])
             results.append({"document_id": payload["document_id"], "result": result})
+        else:
+            log_event(logging.INFO, "unsupported_event",
+                      event_type=payload.get("event_type"))
 
-    return {"processed": len(results), "results": results}
+    return {"processed": len([r for r in results if "result" in r]), "results": results}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--once", action="store_true", help="Process a single SQS receive cycle and exit.")
-    parser.add_argument("--poll", action="store_true", help="Continuously poll SQS.")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--once", action="store_true", help="Process a single SQS receive cycle and exit.")
+    group.add_argument("--poll", action="store_true", help="Continuously poll SQS.")
+    group.add_argument("--lambda-test", action="store_true",
+                       help="Simulate a Lambda invocation for testing.")
     args = parser.parse_args()
+
+    if args.lambda_test:
+        test_event = {
+            "Records": [{
+                "body": json.dumps({
+                    "event_type": "DocumentCreated",
+                    "document_id": os.environ.get("TEST_DOCUMENT_ID", "test-doc")
+                })
+            }]
+        }
+        result = lambda_handler(test_event, None)
+        print(json.dumps(result, indent=2))
+        return
 
     settings = WorkerSettings.from_environment()
     worker = build_worker(settings)

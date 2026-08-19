@@ -22,3 +22,18 @@ output "sqs_dlq_url" {
   description = "Document events dead-letter queue URL."
   value       = module.messaging.dlq_url
 }
+
+output "lambda_function_name" {
+  description = "Lambda function name."
+  value       = module.compute.function_name
+}
+
+output "lambda_function_arn" {
+  description = "Lambda function ARN."
+  value       = module.compute.function_arn
+}
+
+output "lambda_esm_uuid" {
+  description = "SQS-to-Lambda event source mapping UUID."
+  value       = module.compute.esm_uuid
+}

@@ -1,4 +1,7 @@
 from io import BytesIO
+import json
+import os
+from unittest.mock import patch
 
 from handler import DocumentProcessor, DocumentStatus, SqsWorker
 
@@ -128,3 +131,67 @@ def test_sqs_worker_deletes_invalid_json_message() -> None:
 
     assert processed_count == 1
     assert sqs.deleted == ["receipt-invalid"]
+
+
+def test_lambda_handler_processes_document_created():
+    item = {
+        "id": "doc-1",
+        "bucket": "poc-local-documents",
+        "object_key": "documents/doc-1/example.txt",
+        "status": "CREATED",
+    }
+    table = FakeTable(item)
+    processor = DocumentProcessor(FakeS3Client(), FakeDynamoResource(table), "documents")
+
+    event = {
+        "Records": [{
+            "body": json.dumps({"event_type": "DocumentCreated", "document_id": "doc-1"})
+        }]
+    }
+
+    with patch("handler.create_processor", return_value=processor):
+        from handler import lambda_handler
+        result = lambda_handler(event, None)
+
+    assert result["processed"] == 1
+    assert result["results"][0]["document_id"] == "doc-1"
+    assert result["results"][0]["result"] == "processed"
+    assert item["status"] == "PROCESSED"
+
+
+def test_lambda_handler_handles_invalid_json():
+    processor = DocumentProcessor(FakeS3Client(), FakeDynamoResource(FakeTable(None)), "documents")
+
+    event = {
+        "Records": [{"body": "not-valid-json"}]
+    }
+
+    with patch("handler.create_processor", return_value=processor):
+        from handler import lambda_handler
+        result = lambda_handler(event, None)
+
+    assert result["processed"] == 0
+    assert result["results"][0]["error"] == "invalid_record"
+
+
+def test_lambda_handler_skips_unsupported_events():
+    item = {
+        "id": "doc-1",
+        "bucket": "poc-local-documents",
+        "object_key": "documents/doc-1/example.txt",
+        "status": "CREATED",
+    }
+    processor = DocumentProcessor(FakeS3Client(), FakeDynamoResource(FakeTable(item)), "documents")
+
+    event = {
+        "Records": [{
+            "body": json.dumps({"event_type": "DocumentUpdated", "document_id": "doc-1"})
+        }]
+    }
+
+    with patch("handler.create_processor", return_value=processor):
+        from handler import lambda_handler
+        result = lambda_handler(event, None)
+
+    assert result["processed"] == 0
+    assert result["results"] == []

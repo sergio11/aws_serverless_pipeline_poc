@@ -20,11 +20,18 @@ module "messaging" {
   tags       = local.common_tags
 }
 
+module "iam" {
+  source = "./modules/iam"
+
+  name_prefix = local.name_prefix
+  tags        = local.common_tags
+}
+
 module "compute" {
   source = "./modules/compute"
 
   function_name     = local.lambda_function_name
-  lambda_role_arn   = "arn:aws:iam::000000000000:role/lambda-role"
+  lambda_role_arn   = module.iam.role_arn
   s3_bucket         = local.bucket_name
   s3_key            = "lambda/document-processor.zip"
   handler           = "handler.lambda_handler"

@@ -46,6 +46,22 @@ services:
     networks:
       - poc-network
 
+  terraform:
+    build:
+      context: ./terraform/container
+      dockerfile: Containerfile
+    container_name: poc-terraform
+    working_dir: /terraform
+    volumes:
+      - terraform-workdir:/terraform
+    environment:
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
+    entrypoint: ["terraform"]
+    networks:
+      - poc-network
+
   backend:
     build:
       context: ./backend
@@ -149,3 +165,6 @@ services:
 networks:
   poc-network:
     name: poc-network
+
+volumes:
+  terraform-workdir:

@@ -15,6 +15,9 @@ E2E_SERVICE = ENV.fetch("E2E_SERVICE", "e2e")
 INTEGRATION_SERVICE = ENV.fetch("INTEGRATION_SERVICE", "integration")
 INTEGRATION_CONTAINER = ENV.fetch("INTEGRATION_CONTAINER", "poc-integration")
 TERRAFORM_DIR = ENV.fetch("TERRAFORM_DIR", "terraform")
+TERRAFORM_SERVICE = ENV.fetch("TERRAFORM_SERVICE", "terraform")
+TERRAFORM_CONTAINER = ENV.fetch("TERRAFORM_CONTAINER", "poc-terraform")
+TERRAFORM_VOLUME = ENV.fetch("TERRAFORM_VOLUME", "terraform-workdir")
 TERRAFORM_VAR_FILE = ENV.fetch("TERRAFORM_VAR_FILE", "environments/local/terraform.tfvars")
 
 def run_command(*args)
@@ -22,6 +25,89 @@ def run_command(*args)
   puts command
   success = system(*args)
   abort "Command failed: #{command}" unless success
+end
+
+def ensure_terraform_volume
+  existing = `podman volume inspect #{TERRAFORM_VOLUME} 2>&1`
+  return if $?.success?
+  run_command("podman", "volume", "create", TERRAFORM_VOLUME)
+end
+
+def sync_terraform_to_volume
+  ensure_terraform_volume
+  run_command(
+    "podman", "create", "--name", "#{TERRAFORM_CONTAINER}-sync",
+    "--entrypoint", "sh",
+    "-v", "#{TERRAFORM_VOLUME}:/terraform",
+    "-w", "/terraform",
+    "aws-local-poc_terraform", "-c", "true"
+  )
+  run_command(
+    "podman", "cp", "#{TERRAFORM_DIR}/.", "#{TERRAFORM_CONTAINER}-sync:/terraform"
+  )
+  # Fix permissions lost during copy from Windows host
+  run_command(
+    "podman", "run", "--rm",
+    "-v", "#{TERRAFORM_VOLUME}:/terraform",
+    "--entrypoint", "sh",
+    "aws-local-poc_terraform", "-c",
+    "find /terraform/.terraform -type f -name 'terraform-provider-*' -exec chmod +x {} +; true"
+  )
+  run_command("podman", "rm", "-f", "#{TERRAFORM_CONTAINER}-sync")
+end
+
+def sync_terraform_from_volume
+  run_command(
+    "podman", "create", "--name", "#{TERRAFORM_CONTAINER}-sync-back",
+    "--entrypoint", "sh",
+    "-v", "#{TERRAFORM_VOLUME}:/terraform",
+    "-w", "/terraform",
+    "aws-local-poc_terraform", "-c", "true"
+  )
+  run_command(
+    "podman", "cp", "#{TERRAFORM_CONTAINER}-sync-back:/terraform/.", "#{TERRAFORM_DIR}"
+  )
+  run_command("podman", "rm", "-f", "#{TERRAFORM_CONTAINER}-sync-back")
+end
+
+def run_terraform(*args)
+  ensure_terraform_volume
+  sync_terraform_to_volume
+  run_command(
+    "podman", "run", "--rm",
+    "--network", "poc-network",
+    "-e", "AWS_ACCESS_KEY_ID=test",
+    "-e", "AWS_SECRET_ACCESS_KEY=test",
+    "-e", "AWS_DEFAULT_REGION=eu-west-1",
+    "-v", "#{TERRAFORM_VOLUME}:/terraform",
+    "-w", "/terraform",
+    "aws-local-poc_terraform", *args
+  )
+  sync_terraform_from_volume
+end
+
+def sync_terraform_from_volume
+  # Copy state files back to host
+  run_command(
+    "podman", "create", "--name", "#{TERRAFORM_CONTAINER}-sync-back",
+    "-v", "#{TERRAFORM_VOLUME}:/terraform",
+    "-w", "/terraform",
+    "aws-local-poc_terraform", "true"
+  )
+  run_command(
+    "podman", "cp", "#{TERRAFORM_CONTAINER}-sync-back:/terraform/.", "#{TERRAFORM_DIR}"
+  )
+  run_command("podman", "rm", "-f", "#{TERRAFORM_CONTAINER}-sync-back")
+end
+
+def terraform_output_json
+  require "json"
+  ensure_terraform_volume
+  sync_terraform_to_volume
+  output = `podman run --rm --network poc-network -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_DEFAULT_REGION=eu-west-1 -v #{TERRAFORM_VOLUME}:/terraform -w /terraform aws-local-poc_terraform output -json`
+  sync_terraform_from_volume
+  abort "terraform output failed" unless $?.success?
+  JSON.parse(output)
 end
 
 def command_available?(command)
@@ -128,37 +214,37 @@ end
 namespace :infra do
   desc "Initialize Terraform"
   task :init do
-    run_command("terraform", "-chdir=#{TERRAFORM_DIR}", "init")
+    run_terraform("init")
   end
 
   desc "Format Terraform files"
   task :fmt do
-    run_command("terraform", "-chdir=#{TERRAFORM_DIR}", "fmt", "-recursive")
+    run_terraform("fmt", "-recursive")
   end
 
   desc "Validate Terraform configuration"
   task validate: :init do
-    run_command("terraform", "-chdir=#{TERRAFORM_DIR}", "validate")
+    run_terraform("validate")
   end
 
   desc "Show Terraform plan for local infrastructure"
   task plan: ["floci:start", :init] do
-    run_command("terraform", "-chdir=#{TERRAFORM_DIR}", "plan", "-var-file=#{TERRAFORM_VAR_FILE}")
+    run_terraform("plan", "-var-file=#{TERRAFORM_VAR_FILE}")
   end
 
   desc "Apply Terraform local infrastructure"
   task apply: ["floci:start", :init] do
-    run_command("terraform", "-chdir=#{TERRAFORM_DIR}", "apply", "-var-file=#{TERRAFORM_VAR_FILE}")
+    run_terraform("apply", "-var-file=#{TERRAFORM_VAR_FILE}")
   end
 
   desc "Destroy Terraform local infrastructure"
   task destroy: ["floci:start", :init] do
-    run_command("terraform", "-chdir=#{TERRAFORM_DIR}", "destroy", "-var-file=#{TERRAFORM_VAR_FILE}")
+    run_terraform("destroy", "-var-file=#{TERRAFORM_VAR_FILE}")
   end
 
   desc "Show Terraform outputs"
   task :output do
-    run_command("terraform", "-chdir=#{TERRAFORM_DIR}", "output")
+    run_terraform("output")
   end
 
   desc "Package Lambda worker into a deployment zip"
@@ -175,10 +261,8 @@ namespace :infra do
 
   desc "Upload Lambda zip to S3 on Floci"
   task upload_lambda: ["floci:start", :package_lambda] do
-    require "json"
-    outputs_json = `terraform -chdir=#{TERRAFORM_DIR} output -json`
-    abort "terraform output failed" unless $?.success?
-    bucket = JSON.parse(outputs_json).dig("s3_bucket", "value")
+    outputs = terraform_output_json
+    bucket = outputs.dig("s3_bucket", "value")
 
     run_command(
       "aws", "--endpoint-url", FLOCI_ENDPOINT,
@@ -189,10 +273,7 @@ namespace :infra do
 
   desc "Generate .env from Terraform outputs"
   task :env do
-    require "json"
-    outputs_json = `terraform -chdir=#{TERRAFORM_DIR} output -json`
-    abort "terraform output failed" unless $?.success?
-    outputs = JSON.parse(outputs_json)
+    outputs = terraform_output_json
 
     env_content = [
       "S3_BUCKET=#{outputs.dig('s3_bucket', 'value') || ''}",

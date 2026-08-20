@@ -1,0 +1,7 @@
+FROM hashicorp/terraform:1.12
+
+RUN apk add --no-cache bash curl
+
+WORKDIR /terraform
+
+ENTRYPOINT ["terraform"]

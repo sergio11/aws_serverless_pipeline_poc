@@ -15,9 +15,18 @@ dependencies = [
 [project.optional-dependencies]
 test = [
     "httpx==0.28.1",
+    "pytest-cov==6.1.1",
     "pytest==9.1.1",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+fail_under = 98
+show_missing = true

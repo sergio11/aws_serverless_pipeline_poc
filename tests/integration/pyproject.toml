@@ -1,0 +1,14 @@
+[project]
+name = "aws-local-poc-integration"
+version = "0.1.0"
+description = "Integration tests against Floci for the AWS local cloud lab POC."
+requires-python = ">=3.12"
+dependencies = [
+    "boto3==1.43.74",
+    "botocore==1.43.74",
+    "pytest==9.1.1",
+    "s3transfer==0.19.2",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

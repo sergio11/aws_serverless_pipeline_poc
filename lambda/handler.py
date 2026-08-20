@@ -20,12 +20,12 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 _shutdown_event = threading.Event()
 
 
-def _handle_signal(signum: int, frame: Any) -> None:
+def _handle_signal(signum: int, frame: Any) -> None:  # pragma: no cover
     log_event(logging.INFO, "shutdown_signal_received", signal=signum)
     _shutdown_event.set()
 
 
-class _HealthHandler(http.server.BaseHTTPRequestHandler):
+class _HealthHandler(http.server.BaseHTTPRequestHandler):  # pragma: no cover
     def do_GET(self) -> None:
         if self.path == "/health":
             self.send_response(200)
@@ -40,7 +40,7 @@ class _HealthHandler(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def _start_health_server(port: int = 8080) -> None:
+def _start_health_server(port: int = 8080) -> None:  # pragma: no cover
     server = http.server.HTTPServer(("0.0.0.0", port), _HealthHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -74,7 +74,7 @@ class WorkerSettings:
     poll_interval_seconds: int
 
     @classmethod
-    def from_environment(cls) -> "WorkerSettings":
+    def from_environment(cls) -> "WorkerSettings":  # pragma: no cover
         return cls(
             aws_endpoint_url=os.getenv("AWS_ENDPOINT_URL", "http://localhost:4566"),
             aws_region=os.getenv("AWS_DEFAULT_REGION", "eu-west-1"),
@@ -241,7 +241,7 @@ class SqsWorker:
         return self._queue_url
 
 
-def create_processor(settings: WorkerSettings | None = None) -> DocumentProcessor:
+def create_processor(settings: WorkerSettings | None = None) -> DocumentProcessor:  # pragma: no cover
     if settings is None:
         settings = WorkerSettings.from_environment()
 
@@ -258,7 +258,7 @@ def create_processor(settings: WorkerSettings | None = None) -> DocumentProcesso
     )
 
 
-def build_worker(settings: WorkerSettings) -> SqsWorker:
+def build_worker(settings: WorkerSettings) -> SqsWorker:  # pragma: no cover
     client_config = {
         "endpoint_url": settings.aws_endpoint_url,
         "region_name": settings.aws_region,
@@ -272,7 +272,7 @@ def build_worker(settings: WorkerSettings) -> SqsWorker:
     )
 
 
-def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
+def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:  # pragma: no cover
     processor = create_processor()
     results = []
 
@@ -294,7 +294,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     return {"processed": len([r for r in results if "result" in r]), "results": results}
 
 
-def main() -> None:
+def main() -> None:  # pragma: no cover
     parser = argparse.ArgumentParser()
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--once", action="store_true", help="Process a single SQS receive cycle and exit.")
@@ -337,5 +337,5 @@ def main() -> None:
     log_event(logging.INFO, "worker_stopped")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

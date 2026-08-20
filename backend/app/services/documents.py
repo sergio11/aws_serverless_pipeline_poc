@@ -17,22 +17,22 @@ class DocumentInfrastructureError(Exception):
 
 class DocumentStore(Protocol):
     @property
-    def bucket_name(self) -> str:
+    def bucket_name(self) -> str:  # pragma: no cover
         pass
 
-    def build_object_key(self, document_id: str, filename: str) -> str:
+    def build_object_key(self, document_id: str, filename: str) -> str:  # pragma: no cover
         pass
 
-    def save(self, document: Document, content: str) -> None:
+    def save(self, document: Document, content: str) -> None:  # pragma: no cover
         pass
 
-    def get(self, document_id: str) -> Document | None:
+    def get(self, document_id: str) -> Document | None:  # pragma: no cover
         pass
 
-    def get_content(self, document_id: str) -> str | None:
+    def get_content(self, document_id: str) -> str | None:  # pragma: no cover
         pass
 
-    def publish_created(self, document_id: str) -> None:
+    def publish_created(self, document_id: str) -> None:  # pragma: no cover
         pass
 
 

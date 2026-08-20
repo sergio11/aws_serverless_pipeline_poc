@@ -1,7 +1,11 @@
+from datetime import UTC, datetime
+from io import BytesIO
+
 from fastapi.testclient import TestClient
+from botocore.exceptions import ClientError
 
 from app.main import create_app
-from app.domain import Document
+from app.domain import Document, DocumentStatus
 from app.services.documents import DocumentService, InMemoryDocumentStore
 
 
@@ -67,6 +71,15 @@ def test_unknown_document_returns_404() -> None:
     assert response.json() == {"detail": "Document not found"}
 
 
+def test_unknown_document_content_returns_404() -> None:
+    client = create_test_client()
+
+    response = client.get("/documents/missing/content")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Document not found"}
+
+
 def test_rejects_empty_content() -> None:
     client = create_test_client()
 
@@ -93,6 +106,9 @@ class FailingDocumentStore:
     def publish_created(self, document_id: str) -> None:
         raise RuntimeError("queue unavailable")
 
+    def delete(self, document_id: str) -> None:
+        pass
+
 
 def test_create_document_returns_500_when_infrastructure_fails() -> None:
     client = TestClient(create_app(document_service=DocumentService(store=FailingDocumentStore())))
@@ -113,3 +129,12 @@ def test_read_document_returns_500_when_infrastructure_fails() -> None:
 
     assert response.status_code == 500
     assert response.json() == {"detail": "Document could not be read"}
+
+
+def test_content_returns_500_when_infrastructure_fails() -> None:
+    client = TestClient(create_app(document_service=DocumentService(store=FailingDocumentStore())))
+
+    response = client.get("/documents/example/content")
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Document content could not be read"}

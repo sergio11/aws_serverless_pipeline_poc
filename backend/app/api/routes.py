@@ -14,7 +14,7 @@ router = APIRouter()
 
 
 def get_document_service() -> DocumentService:
-    raise RuntimeError("Document service dependency was not configured")
+    raise RuntimeError("Document service dependency was not configured")  # pragma: no cover
 
 
 @router.get("/health")

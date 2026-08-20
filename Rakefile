@@ -12,6 +12,8 @@ WORKER_SERVICE = ENV.fetch("WORKER_SERVICE", "lambda-worker")
 WORKER_CONTAINER = ENV.fetch("WORKER_CONTAINER", "poc-lambda-worker")
 LAMBDA_FUNCTION = ENV.fetch("LAMBDA_FUNCTION", "poc-local-document-processor")
 E2E_SERVICE = ENV.fetch("E2E_SERVICE", "e2e")
+INTEGRATION_SERVICE = ENV.fetch("INTEGRATION_SERVICE", "integration")
+INTEGRATION_CONTAINER = ENV.fetch("INTEGRATION_CONTAINER", "poc-integration")
 TERRAFORM_DIR = ENV.fetch("TERRAFORM_DIR", "terraform")
 TERRAFORM_VAR_FILE = ENV.fetch("TERRAFORM_VAR_FILE", "environments/local/terraform.tfvars")
 
@@ -215,7 +217,7 @@ namespace :backend do
 
   desc "Run backend tests"
   task test: :build do
-    run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "--no-deps", "-T", BACKEND_SERVICE, "pytest", "tests")
+    run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "--no-deps", "-T", BACKEND_SERVICE, "pytest", "tests", "--cov=app", "--cov-report=term-missing", "--cov-fail-under=98")
   end
 
   desc "Start the backend service"
@@ -261,6 +263,11 @@ namespace :backend do
   task smoke: :start do
     run_command("curl", "-fsS", "#{BACKEND_ENDPOINT}/health")
   end
+
+  desc "Generate HTML coverage report for backend"
+  task coverage: :build do
+    run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "--no-deps", "-T", BACKEND_SERVICE, "pytest", "tests", "--cov=app", "--cov-report=html", "--cov-report=term-missing", "--cov-fail-under=98")
+  end
 end
 
 namespace :worker do
@@ -271,7 +278,7 @@ namespace :worker do
 
   desc "Run worker tests"
   task test: :build do
-    run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "--no-deps", "-T", WORKER_SERVICE, "pytest", "tests")
+    run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "--no-deps", "-T", WORKER_SERVICE, "pytest", "tests", "--cov=handler", "--cov-report=term-missing", "--cov-fail-under=98")
   end
 
   desc "Process one SQS receive cycle and exit"
@@ -342,6 +349,18 @@ namespace :lambda do
   end
 end
 
+namespace :integration do
+  desc "Build the integration test container"
+  task :build do
+    run_command("podman-compose", "-f", COMPOSE_FILE, "build", INTEGRATION_SERVICE)
+  end
+
+  desc "Run integration tests against Floci"
+  task test: ["infra:deploy", :build] do
+    run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "--no-deps", "-T", INTEGRATION_SERVICE, "pytest", "tests")
+  end
+end
+
 namespace :e2e do
   desc "Build the end-to-end test container"
   task :build do
@@ -380,11 +399,17 @@ namespace :test do
   desc "Run unit/API tests for backend and worker"
   task unit: ["backend:test", "worker:test"]
 
+  desc "Run integration tests against Floci"
+  task integration: "integration:test"
+
   desc "Run end-to-end tests"
   task e2e: "e2e:test"
 
   desc "Run all tests"
-  task all: [:unit, :e2e]
+  task all: [:unit, :integration, :e2e]
+
+  desc "Destroy infra, rebuild, and run full test suite"
+  task rebuild: ["infra:destroy", "infra:deploy", "test:unit", "test:integration", "test:e2e"]
 end
 
 namespace :verify do

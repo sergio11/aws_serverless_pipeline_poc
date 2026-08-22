@@ -74,7 +74,14 @@ class AwsDocumentStore:
             Body=content.encode("utf-8"),
             ContentType="text/plain; charset=utf-8",
         )
-        self._get_table().put_item(Item=self._serialize_document(document))
+        try:
+            self._get_table().put_item(Item=self._serialize_document(document))
+        except ClientError:
+            try:
+                self._get_s3().delete_object(Bucket=document.bucket, Key=document.object_key)
+            except ClientError:
+                logger.warning("s3_rollback_failed document_id=%s", document.id, exc_info=True)
+            raise
 
     def get(self, document_id: str) -> Document | None:
         response = self._get_table().get_item(Key={"id": document_id})
@@ -112,11 +119,6 @@ class AwsDocumentStore:
         if document is None:
             return
         try:
-            self._get_s3().delete_object(Bucket=document.bucket, Key=document.object_key)
-        except ClientError:
-            logger.warning("s3_delete_failed_orphan_risk document_id=%s bucket=%s key=%s",
-                           document_id, document.bucket, document.object_key, exc_info=True)
-        try:
             self._get_table().delete_item(
                 Key={"id": document_id},
                 ConditionExpression="attribute_exists(id)",
@@ -125,11 +127,19 @@ class AwsDocumentStore:
             if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
                 return
             logger.warning("dynamodb_delete_failed document_id=%s", document_id, exc_info=True)
+            return
+        try:
+            self._get_s3().delete_object(Bucket=document.bucket, Key=document.object_key)
+        except ClientError:
+            logger.warning("s3_delete_failed_orphan_risk document_id=%s bucket=%s key=%s",
+                           document_id, document.bucket, document.object_key, exc_info=True)
 
     def _get_queue_url(self) -> str:
         if self._queue_url is None:
-            response = self._get_sqs().get_queue_url(QueueName=self._queue_name)
-            self._queue_url = response["QueueUrl"]
+            with self._init_lock:
+                if self._queue_url is None:
+                    response = self._get_sqs().get_queue_url(QueueName=self._queue_name)
+                    self._queue_url = response["QueueUrl"]
         return self._queue_url
 
     def health_check(self) -> dict[str, str]:

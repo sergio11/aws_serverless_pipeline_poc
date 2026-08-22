@@ -227,7 +227,7 @@ def test_lambda_handler_processes_document_created():
         }]
     }
 
-    with patch("handler.create_processor", return_value=processor):
+    with patch("handler._get_lambda_processor", return_value=processor):
         from handler import lambda_handler
         result = lambda_handler(event, None)
 
@@ -244,7 +244,7 @@ def test_lambda_handler_handles_invalid_json():
         "Records": [{"body": "not-valid-json"}]
     }
 
-    with patch("handler.create_processor", return_value=processor):
+    with patch("handler._get_lambda_processor", return_value=processor):
         from handler import lambda_handler
         result = lambda_handler(event, None)
 
@@ -267,7 +267,7 @@ def test_lambda_handler_skips_unsupported_events():
         }]
     }
 
-    with patch("handler.create_processor", return_value=processor):
+    with patch("handler._get_lambda_processor", return_value=processor):
         from handler import lambda_handler
         result = lambda_handler(event, None)
 
@@ -280,7 +280,7 @@ def test_lambda_handler_empty_records():
 
     event = {"Records": []}
 
-    with patch("handler.create_processor", return_value=processor):
+    with patch("handler._get_lambda_processor", return_value=processor):
         from handler import lambda_handler
         result = lambda_handler(event, None)
 
@@ -293,7 +293,7 @@ def test_lambda_handler_missing_body_key():
 
     event = {"Records": [{"other_field": "value"}]}
 
-    with patch("handler.create_processor", return_value=processor):
+    with patch("handler._get_lambda_processor", return_value=processor):
         from handler import lambda_handler
         result = lambda_handler(event, None)
 
@@ -344,7 +344,7 @@ def test_lambda_handler_batch_with_partial_failure():
         ]
     }
 
-    with patch("handler.create_processor", return_value=processor):
+    with patch("handler._get_lambda_processor", return_value=processor):
         from handler import lambda_handler
         result = lambda_handler(event, None)
 
@@ -472,6 +472,86 @@ def test_processor_force_releases_expired_lock() -> None:
     assert item["status"] == DocumentStatus.PROCESSED
     assert "processing_owner" not in item
     assert "processing_started_at" not in item
+
+
+def test_force_release_expired_lock_does_not_use_owner_condition() -> None:
+    """Verify that force_release_expired_lock removes the lock without
+    checking the owner, allowing recovery when the original worker is dead."""
+    expired_at = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
+    item = {
+        "id": "doc-1",
+        "bucket": "poc-local-documents",
+        "object_key": "documents/doc-1/example.txt",
+        "status": "processing",
+        "processing_owner": "dead-worker-abc",
+        "processing_started_at": expired_at,
+    }
+    table = FakeTable(item)
+    processor = DocumentProcessor(FakeS3Client(), FakeDynamoResource(table), "documents")
+
+    processor._force_release_expired_lock("doc-1")
+
+    assert "processing_owner" not in item
+    assert "processing_started_at" not in item
+    assert len(table.updates) == 1
+    assert "REMOVE" in table.updates[0].get("UpdateExpression", "")
+
+
+def test_processor_returns_locked_when_lock_not_expired() -> None:
+    """When a lock exists and is NOT expired, returns False (locked)."""
+    recent_at = (datetime.now(UTC) - timedelta(seconds=30)).isoformat()
+    item = {
+        "id": "doc-1",
+        "bucket": "poc-local-documents",
+        "object_key": "documents/doc-1/example.txt",
+        "status": "created",
+        "processing_owner": "active-worker",
+        "processing_started_at": recent_at,
+    }
+    table = FakeTable(item)
+    processor = DocumentProcessor(FakeS3Client(), FakeDynamoResource(table), "documents")
+
+    result = processor.process("doc-1")
+
+    assert result == "locked"
+    assert item.get("processing_owner") == "active-worker"
+
+
+def test_processor_returns_locked_when_owner_without_started_at() -> None:
+    """When a lock has owner but no processing_started_at, returns False."""
+    item = {
+        "id": "doc-1",
+        "bucket": "poc-local-documents",
+        "object_key": "documents/doc-1/example.txt",
+        "status": "created",
+        "processing_owner": "some-worker",
+    }
+    table = FakeTable(item)
+    processor = DocumentProcessor(FakeS3Client(), FakeDynamoResource(table), "documents")
+
+    result = processor.process("doc-1")
+
+    assert result == "locked"
+
+
+def test_force_release_expired_lock_tolerates_client_error() -> None:
+    """Verify that _force_release_expired_lock logs and tolerates ClientError."""
+    from unittest.mock import MagicMock
+
+    failing_table = MagicMock()
+    failing_table.update_item.side_effect = ClientError(
+        {"Error": {"Code": "ProvisionedThroughputExceededException"}},
+        "UpdateItem",
+    )
+
+    dynamodb_resource = MagicMock()
+    dynamodb_resource.Table.return_value = failing_table
+
+    processor = DocumentProcessor(FakeS3Client(), dynamodb_resource, "documents")
+
+    processor._force_release_expired_lock("doc-1")
+
+    failing_table.update_item.assert_called_once()
 
 
 def test_processor_uses_consistent_owner_identifier() -> None:

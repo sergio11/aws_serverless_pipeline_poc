@@ -122,6 +122,8 @@ services:
 
   # Polling worker fallback. Used when Floci Lambda is unavailable.
   # Primary processing now uses Terraform-managed Lambda function.
+  # WARNING: Do NOT start both this worker and the Terraform Lambda simultaneously.
+  # They consume the same SQS queue and would create a race condition.
   lambda-worker:
     build:
       context: ./lambda

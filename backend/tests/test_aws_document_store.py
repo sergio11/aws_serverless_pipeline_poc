@@ -40,8 +40,11 @@ class FakeS3Client:
 class FakeTable:
     def __init__(self) -> None:
         self.items: dict[str, dict[str, object]] = {}
+        self._raise_on_put: Exception | None = None
 
     def put_item(self, Item: dict[str, object]) -> None:
+        if self._raise_on_put:
+            raise self._raise_on_put
         self.items[str(Item["id"])] = Item
 
     def get_item(self, Key: dict[str, str]) -> dict[str, dict[str, object]]:
@@ -141,6 +144,46 @@ def test_aws_document_store_persists_content_metadata_and_event(monkeypatch) -> 
 
     assert store.get("doc-1") == document
     assert store.get_content("doc-1") == b"Hello AWS"
+
+
+def test_save_rolls_back_s3_on_dynamodb_failure(monkeypatch) -> None:
+    s3 = FakeS3Client()
+    table = FakeTable()
+    table._raise_on_put = ClientError(
+        {"Error": {"Code": "ProvisionedThroughputExceededException"}}, "PutItem"
+    )
+    store = _make_store(monkeypatch, s3=s3, table=table)
+    document = _make_document()
+
+    try:
+        store.save(document, "Hello AWS")
+        assert False, "Should have raised"
+    except ClientError:
+        pass
+
+    assert (document.bucket, document.object_key) not in s3.objects
+
+
+def test_save_logs_warning_when_s3_rollback_fails(monkeypatch) -> None:
+    class FailingRollbackS3(FakeS3Client):
+        def delete_object(self, Bucket: str, Key: str) -> None:
+            raise ClientError({"Error": {"Code": "AccessDenied"}}, "DeleteObject")
+
+    s3 = FailingRollbackS3()
+    table = FakeTable()
+    table._raise_on_put = ClientError(
+        {"Error": {"Code": "ProvisionedThroughputExceededException"}}, "PutItem"
+    )
+    store = _make_store(monkeypatch, s3=s3, table=table)
+    document = _make_document()
+
+    try:
+        store.save(document, "Hello AWS")
+        assert False, "Should have raised"
+    except ClientError:
+        pass
+
+    assert (document.bucket, document.object_key) in s3.objects
 
 
 def test_round_trip_save_get_deserialize(monkeypatch) -> None:
@@ -249,7 +292,7 @@ class FailingDeleteS3Client(FakeS3Client):
         raise ClientError({"Error": {"Code": "AccessDenied"}}, "DeleteObject")
 
 
-def test_delete_tolerates_s3_error(monkeypatch) -> None:
+def test_delete_tolerates_s3_error_after_metadata_removal(monkeypatch) -> None:
     s3 = FailingDeleteS3Client()
     table = FakeTable()
     store = _make_store(monkeypatch, s3=s3, table=table)
@@ -266,11 +309,15 @@ class FailingDeleteDynamoTable(FakeTable):
         raise ClientError({"Error": {"Code": "ProvisionedThroughputExceededException"}}, "DeleteItem")
 
 
-def test_delete_tolerates_dynamodb_error(monkeypatch) -> None:
+def test_delete_returns_early_on_dynamodb_error(monkeypatch) -> None:
     table = FailingDeleteDynamoTable()
     store = _make_store(monkeypatch, table=table)
     document = _make_document()
     store.save(document, "Hello AWS")
+
+    store.delete("doc-1")
+
+    assert "doc-1" in table.items
 
     store.delete("doc-1")
 

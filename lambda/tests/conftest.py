@@ -17,6 +17,45 @@ class FakeS3Client:
         self._raise_error = error
 
 
+def _check_condition(item: dict | None, condition: str, values: dict) -> None:
+    """Evaluate simple ConditionExpression patterns against an item."""
+    if item is None:
+        item = {}
+
+    if "attribute_not_exists(processing_owner)" in condition:
+        if "processing_owner" in item:
+            raise ClientError(
+                {"Error": {"Code": "ConditionalCheckFailedException",
+                           "Message": "The conditional check failed"}},
+                "UpdateItem",
+            )
+
+    if "processing_owner = :owner" in condition:
+        expected_owner = values.get(":owner")
+        if item.get("processing_owner") != expected_owner:
+            raise ClientError(
+                {"Error": {"Code": "ConditionalCheckFailedException",
+                           "Message": "The conditional check failed"}},
+                "UpdateItem",
+            )
+
+    if "#status <> :processed" in condition:
+        if item.get("status") == values.get(":processed"):
+            raise ClientError(
+                {"Error": {"Code": "ConditionalCheckFailedException",
+                           "Message": "The conditional check failed"}},
+                "UpdateItem",
+            )
+
+    if "attribute_exists(id)" in condition:
+        if "id" not in item:
+            raise ClientError(
+                {"Error": {"Code": "ConditionalCheckFailedException",
+                           "Message": "The conditional check failed"}},
+                "DeleteItem",
+            )
+
+
 class FakeTable:
     def __init__(self, item: dict[str, object] | None) -> None:
         self.item = item
@@ -29,8 +68,12 @@ class FakeTable:
     def update_item(self, **kwargs) -> None:
         if self._raise_on_update:
             raise self._raise_on_update
-        self.updates.append(kwargs)
+
+        condition = kwargs.get("ConditionExpression", "")
         values = kwargs.get("ExpressionAttributeValues", {})
+        _check_condition(self.item, condition, values)
+
+        self.updates.append(kwargs)
         if self.item is not None:
             if ":status" in values:
                 self.item["status"] = values[":status"]

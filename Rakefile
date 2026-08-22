@@ -348,12 +348,12 @@ namespace :worker do
     run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "--no-deps", "-T", WORKER_SERVICE, "pytest", "tests", "--cov=handler", "--cov-report=term-missing", "--cov-fail-under=98")
   end
 
-  desc "Process one SQS receive cycle and exit"
+  desc "Process one SQS receive cycle and exit (fallback when Lambda unavailable)"
   task run_once: ["floci:start", :build] do
     run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "-T", WORKER_SERVICE, "python", "handler.py", "--once")
   end
 
-  desc "Start the polling worker"
+  desc "Start the polling worker (fallback when Lambda unavailable)"
   task start: ["floci:start", :build] do
     run_command("podman-compose", "-f", COMPOSE_FILE, "up", "-d", WORKER_SERVICE)
   end

@@ -59,8 +59,12 @@ def log_event(level: int, event: str, **fields: Any) -> None:
     logger.log(level, json.dumps(payload, default=str))
 
 
-# NOTE: This enum must stay synchronized with backend/app/domain.py:DocumentStatus
-# If adding new states, update BOTH files.
+# CRITICAL: This enum MUST stay synchronized with backend/app/domain.py:DocumentStatus.
+# Both files define identical states. If adding new states, update BOTH files.
+# The values must match exactly because they are stored in DynamoDB and compared
+# across services. To verify synchronization, run:
+#   diff <(python -c "from backend.app.domain import DocumentStatus; print(list(DocumentStatus))") \
+#        <(python -c "import sys; sys.path.insert(0,'lambda'); from handler import DocumentStatus; print(list(DocumentStatus))")
 class DocumentStatus(StrEnum):
     CREATED = "created"
     PROCESSING = "processing"
@@ -159,7 +163,7 @@ class DocumentProcessor:
                     if lock_age > MAX_LOCK_AGE_SECONDS:
                         log_event(logging.WARNING, "lock_expired_releasing",
                                   document_id=document_id, lock_age=lock_age)
-                        self._release_processing_lock(document_id)
+                        self._force_release_expired_lock(document_id)
                     else:
                         return False
                 else:
@@ -196,6 +200,18 @@ class DocumentProcessor:
             )
         except ClientError as exc:
             log_event(logging.WARNING, "lock_release_failed",
+                      document_id=document_id, error=str(exc))
+
+    def _force_release_expired_lock(self, document_id: str) -> None:
+        """Force-releases an expired lock regardless of owner. Used when the
+        original owner is presumed dead and another worker needs to recover."""
+        try:
+            self._table.update_item(
+                Key={"id": document_id},
+                UpdateExpression="REMOVE processing_owner, processing_started_at",
+            )
+        except ClientError as exc:
+            log_event(logging.WARNING, "force_lock_release_failed",
                       document_id=document_id, error=str(exc))
 
     def _get_document(self, document_id: str) -> dict[str, Any] | None:
@@ -319,8 +335,20 @@ def build_worker(settings: WorkerSettings) -> SqsWorker:  # pragma: no cover
     )
 
 
+# Module-level processor for Lambda warm start reuse. Clients are created once
+# and reused across invocations, avoiding connection overhead on warm starts.
+_lambda_processor: DocumentProcessor | None = None
+
+
+def _get_lambda_processor() -> DocumentProcessor:  # pragma: no cover
+    global _lambda_processor
+    if _lambda_processor is None:
+        _lambda_processor = create_processor()
+    return _lambda_processor
+
+
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:  # pragma: no cover
-    processor = create_processor()
+    processor = _get_lambda_processor()
     results = []
 
     for record in event.get("Records", []):

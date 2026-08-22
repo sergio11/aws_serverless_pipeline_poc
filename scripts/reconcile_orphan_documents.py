@@ -58,17 +58,22 @@ def send_requeue_message(sqs, queue_url: str, document_id: str, dry_run: bool) -
     print(f"  Requeued document {document_id}")
 
 
-def reset_processing_lock(table, document_id: str, dry_run: bool) -> None:
+def reset_processing_lock(table, document_id: str, dry_run: bool) -> bool:
     if dry_run:
         print(f"  [dry-run] Would reset lock for {document_id}")
-        return
-    table.update_item(
-        Key={"id": document_id},
-        UpdateExpression="SET #s = :created REMOVE processing_owner, processing_started_at",
-        ExpressionAttributeNames={"#s": "status"},
-        ExpressionAttributeValues={":created": "created"},
-    )
-    print(f"  Reset lock for {document_id}")
+        return True
+    try:
+        table.update_item(
+            Key={"id": document_id},
+            UpdateExpression="SET #s = :created REMOVE processing_owner, processing_started_at",
+            ExpressionAttributeNames={"#s": "status"},
+            ExpressionAttributeValues={":created": "created"},
+        )
+        print(f"  Reset lock for {document_id}")
+        return True
+    except Exception as exc:
+        print(f"  WARNING: Failed to reset lock for {document_id}: {exc}")
+        return False
 
 
 def main() -> None:
@@ -103,17 +108,23 @@ def main() -> None:
     if not stale:
         return
 
+    processed_count = 0
     for item in stale:
         doc_id = item["id"]
         status = item["status"]
         print(f"\nDocument {doc_id} (status={status}):")
 
+        lock_reset = True
         if status == "processing":
-            reset_processing_lock(table, doc_id, args.dry_run)
+            lock_reset = reset_processing_lock(table, doc_id, args.dry_run)
 
-        send_requeue_message(sqs, queue_url, doc_id, args.dry_run)
+        if lock_reset:
+            send_requeue_message(sqs, queue_url, doc_id, args.dry_run)
+            processed_count += 1
+        else:
+            print(f"  Skipping requeue for {doc_id} due to lock reset failure")
 
-    print(f"\nReconciliation complete. Processed {len(stale)} document(s).")
+    print(f"\nReconciliation complete. Processed {processed_count}/{len(stale)} document(s).")
 
 
 if __name__ == "__main__":

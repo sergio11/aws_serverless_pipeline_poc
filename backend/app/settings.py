@@ -20,6 +20,6 @@ class Settings:
             aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
             aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
             s3_bucket=os.getenv("S3_BUCKET", "poc-local-documents"),
-            dynamodb_table=os.getenv("DYNAMODB_TABLE", "documents"),
+            dynamodb_table=os.getenv("DYNAMODB_TABLE", "documents-metadata"),
             sqs_queue_name=os.getenv("SQS_QUEUE_NAME", "document-events"),
         )

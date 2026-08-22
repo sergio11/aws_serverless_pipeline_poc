@@ -223,6 +223,7 @@ def test_lambda_handler_processes_document_created():
 
     event = {
         "Records": [{
+            "messageId": "msg-1",
             "body": json.dumps({"event_type": "DocumentCreated", "document_id": "doc-1"})
         }]
     }
@@ -235,13 +236,14 @@ def test_lambda_handler_processes_document_created():
     assert result["results"][0]["document_id"] == "doc-1"
     assert result["results"][0]["result"] == "processed"
     assert item["status"] == "processed"
+    assert "batchItemFailures" not in result
 
 
 def test_lambda_handler_handles_invalid_json():
     processor = DocumentProcessor(FakeS3Client(), FakeDynamoResource(FakeTable(None)), "documents")
 
     event = {
-        "Records": [{"body": "not-valid-json"}]
+        "Records": [{"messageId": "msg-bad", "body": "not-valid-json"}]
     }
 
     with patch("handler._get_lambda_processor", return_value=processor):
@@ -250,6 +252,8 @@ def test_lambda_handler_handles_invalid_json():
 
     assert result["processed"] == 0
     assert result["results"][0]["error"] == "invalid_record"
+    assert "batchItemFailures" in result
+    assert result["batchItemFailures"][0]["itemIdentifier"] == "msg-bad"
 
 
 def test_lambda_handler_skips_unsupported_events():
@@ -291,7 +295,7 @@ def test_lambda_handler_empty_records():
 def test_lambda_handler_missing_body_key():
     processor = DocumentProcessor(FakeS3Client(), FakeDynamoResource(FakeTable(None)), "documents")
 
-    event = {"Records": [{"other_field": "value"}]}
+    event = {"Records": [{"messageId": "msg-nobody", "other_field": "value"}]}
 
     with patch("handler._get_lambda_processor", return_value=processor):
         from handler import lambda_handler
@@ -299,6 +303,8 @@ def test_lambda_handler_missing_body_key():
 
     assert result["processed"] == 0
     assert result["results"][0]["error"] == "invalid_record"
+    assert "batchItemFailures" in result
+    assert result["batchItemFailures"][0]["itemIdentifier"] == "msg-nobody"
 
 
 def test_lambda_handler_batch_with_partial_failure():
@@ -338,9 +344,9 @@ def test_lambda_handler_batch_with_partial_failure():
 
     event = {
         "Records": [
-            {"body": json.dumps({"event_type": "DocumentCreated", "document_id": "doc-1"})},
-            {"body": "not-valid-json"},
-            {"body": json.dumps({"event_type": "DocumentCreated", "document_id": "doc-missing"})},
+            {"messageId": "msg-1", "body": json.dumps({"event_type": "DocumentCreated", "document_id": "doc-1"})},
+            {"messageId": "msg-2", "body": "not-valid-json"},
+            {"messageId": "msg-3", "body": json.dumps({"event_type": "DocumentCreated", "document_id": "doc-missing"})},
         ]
     }
 
@@ -348,11 +354,110 @@ def test_lambda_handler_batch_with_partial_failure():
         from handler import lambda_handler
         result = lambda_handler(event, None)
 
-    assert result["processed"] == 2
+    assert result["processed"] == 1
     assert len(result["results"]) == 3
     assert result["results"][0]["result"] == "processed"
     assert result["results"][1]["error"] == "invalid_record"
     assert result["results"][2]["result"] == "missing"
+    assert "batchItemFailures" in result
+    assert len(result["batchItemFailures"]) == 1
+    assert result["batchItemFailures"][0]["itemIdentifier"] == "msg-2"
+
+
+def test_lambda_handler_returns_batch_item_failures_for_errors():
+    """Verify that unhandled processor exceptions are reported as batch failures."""
+    item = {
+        "id": "doc-1",
+        "bucket": "poc-local-documents",
+        "object_key": "documents/doc-1/example.txt",
+        "status": "created",
+    }
+    table = FakeTable(item)
+    s3 = FakeS3Client()
+    s3.fail_with(ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject"))
+    processor = DocumentProcessor(s3, FakeDynamoResource(table), "documents")
+
+    event = {
+        "Records": [
+            {"messageId": "msg-err", "body": json.dumps({"event_type": "DocumentCreated", "document_id": "doc-1"})},
+        ]
+    }
+
+    with patch("handler._get_lambda_processor", return_value=processor):
+        from handler import lambda_handler
+        result = lambda_handler(event, None)
+
+    assert result["processed"] == 0
+    assert "batchItemFailures" in result
+    assert len(result["batchItemFailures"]) == 1
+    assert result["batchItemFailures"][0]["itemIdentifier"] == "msg-err"
+    assert result["results"][0]["error"]
+
+
+def test_lambda_handler_returns_batch_item_failures_for_locked():
+    """Verify that locked documents are reported as batch failures for retry."""
+    item = {
+        "id": "doc-1",
+        "bucket": "poc-local-documents",
+        "object_key": "documents/doc-1/example.txt",
+        "status": "created",
+    }
+    table = FakeTable(item)
+
+    original_update_item = table.update_item
+
+    def conditional_update(**kwargs):
+        cond = kwargs.get("ConditionExpression", "")
+        if "attribute_not_exists(processing_owner)" in cond:
+            raise ClientError(
+                {"Error": {"Code": "ConditionalCheckFailedException", "Message": "locked"}},
+                "UpdateItem",
+            )
+        original_update_item(**kwargs)
+
+    table.update_item = conditional_update
+    processor = DocumentProcessor(FakeS3Client(), FakeDynamoResource(table), "documents")
+
+    event = {
+        "Records": [
+            {"messageId": "msg-locked", "body": json.dumps({"event_type": "DocumentCreated", "document_id": "doc-1"})},
+        ]
+    }
+
+    with patch("handler._get_lambda_processor", return_value=processor):
+        from handler import lambda_handler
+        result = lambda_handler(event, None)
+
+    assert result["processed"] == 0
+    assert "batchItemFailures" in result
+    assert len(result["batchItemFailures"]) == 1
+    assert result["batchItemFailures"][0]["itemIdentifier"] == "msg-locked"
+    assert result["results"][0]["result"] == "locked"
+
+
+def test_lambda_handler_no_batch_item_failures_on_full_success():
+    """Verify that batchItemFailures is absent when all records succeed."""
+    item = {
+        "id": "doc-1",
+        "bucket": "poc-local-documents",
+        "object_key": "documents/doc-1/example.txt",
+        "status": "created",
+    }
+    table = FakeTable(item)
+    processor = DocumentProcessor(FakeS3Client(), FakeDynamoResource(table), "documents")
+
+    event = {
+        "Records": [
+            {"messageId": "msg-ok", "body": json.dumps({"event_type": "DocumentCreated", "document_id": "doc-1"})},
+        ]
+    }
+
+    with patch("handler._get_lambda_processor", return_value=processor):
+        from handler import lambda_handler
+        result = lambda_handler(event, None)
+
+    assert result["processed"] == 1
+    assert "batchItemFailures" not in result
 
 
 def test_processor_returns_locked_when_another_worker_holds_lock() -> None:

@@ -18,7 +18,7 @@ from botocore.exceptions import ClientError
 logger = logging.getLogger("lambda-worker")
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-MAX_LOCK_AGE_SECONDS = 120
+MAX_LOCK_AGE_SECONDS = int(os.getenv("MAX_LOCK_AGE_SECONDS", "300"))
 _shutdown_event = threading.Event()
 
 
@@ -89,7 +89,7 @@ class WorkerSettings:
             aws_region=os.getenv("AWS_DEFAULT_REGION", "eu-west-1"),
             aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
             aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
-            dynamodb_table=os.getenv("DYNAMODB_TABLE", "documents"),
+            dynamodb_table=os.getenv("DYNAMODB_TABLE", "documents-metadata"),
             sqs_queue_name=os.getenv("SQS_QUEUE_NAME", "document-events"),
             poll_interval_seconds=int(os.getenv("WORKER_POLL_INTERVAL_SECONDS", "2")),
         )
@@ -350,23 +350,47 @@ def _get_lambda_processor() -> DocumentProcessor:  # pragma: no cover
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:  # pragma: no cover
     processor = _get_lambda_processor()
     results = []
+    batch_item_failures: list[dict[str, str]] = []
 
     for record in event.get("Records", []):
+        message_id = record.get("messageId", "unknown")
         try:
             payload = json.loads(record["body"])
         except (json.JSONDecodeError, KeyError):
-            log_event(logging.WARNING, "invalid_record")
+            log_event(logging.WARNING, "invalid_record", message_id=message_id)
             results.append({"error": "invalid_record"})
+            batch_item_failures.append({"itemIdentifier": message_id})
             continue
 
         if payload.get("event_type") == "DocumentCreated":
-            result = processor.process(payload["document_id"])
+            try:
+                result = processor.process(payload["document_id"])
+            except Exception as exc:
+                log_event(logging.ERROR, "record_processing_failed",
+                          document_id=payload["document_id"], reason=str(exc))
+                results.append({"document_id": payload["document_id"], "error": str(exc)})
+                batch_item_failures.append({"itemIdentifier": message_id})
+                continue
+
+            if result == "locked":
+                log_event(logging.INFO, "record_deferred_locked",
+                          document_id=payload["document_id"], message_id=message_id)
+                results.append({"document_id": payload["document_id"], "result": result})
+                batch_item_failures.append({"itemIdentifier": message_id})
+                continue
+
             results.append({"document_id": payload["document_id"], "result": result})
         else:
             log_event(logging.INFO, "unsupported_event",
                       event_type=payload.get("event_type"))
 
-    return {"processed": len([r for r in results if "result" in r]), "results": results}
+    response: dict[str, Any] = {
+        "processed": len([r for r in results if r.get("result") == "processed"]),
+        "results": results,
+    }
+    if batch_item_failures:
+        response["batchItemFailures"] = batch_item_failures
+    return response
 
 
 def main() -> None:  # pragma: no cover

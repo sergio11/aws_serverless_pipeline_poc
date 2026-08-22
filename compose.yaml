@@ -130,7 +130,7 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
       S3_BUCKET: ${S3_BUCKET:-poc-local-documents}
-      DYNAMODB_TABLE: ${DYNAMODB_TABLE:-documents}
+      DYNAMODB_TABLE: ${DYNAMODB_TABLE:-documents-metadata}
       SQS_QUEUE_NAME: ${SQS_QUEUE_NAME:-document-events}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
@@ -177,7 +177,7 @@ services:
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
-      DYNAMODB_TABLE: ${DYNAMODB_TABLE:-documents}
+      DYNAMODB_TABLE: ${DYNAMODB_TABLE:-documents-metadata}
       SQS_QUEUE_NAME: ${SQS_QUEUE_NAME:-document-events}
       WORKER_POLL_INTERVAL_SECONDS: ${WORKER_POLL_INTERVAL_SECONDS:-2}
     ports:
@@ -219,7 +219,7 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
       S3_BUCKET: ${S3_BUCKET:-poc-local-documents}
-      DYNAMODB_TABLE: ${DYNAMODB_TABLE:-documents}
+      DYNAMODB_TABLE: ${DYNAMODB_TABLE:-documents-metadata}
       SQS_QUEUE_NAME: ${SQS_QUEUE_NAME:-document-events}
       SQS_DLQ_NAME: ${SQS_DLQ_NAME:-document-events-dlq}
     depends_on:
@@ -254,7 +254,7 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
       S3_BUCKET: ${S3_BUCKET:-poc-local-documents}
-      DYNAMODB_TABLE: ${DYNAMODB_TABLE:-documents}
+      DYNAMODB_TABLE: ${DYNAMODB_TABLE:-documents-metadata}
       SQS_QUEUE_NAME: ${SQS_QUEUE_NAME:-document-events}
       SQS_DLQ_NAME: ${SQS_DLQ_NAME:-document-events-dlq}
     depends_on:

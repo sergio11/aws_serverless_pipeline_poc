@@ -15,7 +15,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Reconcile orphaned documents.")
     parser.add_argument("--endpoint-url", default="http://localhost:4566")
     parser.add_argument("--region", default="eu-west-1")
-    parser.add_argument("--table", default="documents")
+    parser.add_argument("--table", default="documents-metadata")
     parser.add_argument("--queue", default="document-events")
     parser.add_argument("--max-age-minutes", type=int, default=10)
     parser.add_argument("--dry-run", action="store_true")

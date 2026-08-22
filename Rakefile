@@ -269,7 +269,7 @@ namespace :infra do
     run_command(
       "python", "scripts/reconcile_orphan_documents.py",
       "--endpoint-url", FLOCI_ENDPOINT,
-      "--table", "documents",
+      "--table", "documents-metadata",
       "--queue", "document-events",
       "--max-age-minutes", max_age,
     )

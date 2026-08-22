@@ -2,7 +2,7 @@ locals {
   name_prefix = "${var.project_name}-${var.environment}"
 
   bucket_name = "${local.name_prefix}-documents"
-  table_name  = "${local.name_prefix}-documents"
+  table_name  = "${local.name_prefix}-documents-metadata"
   queue_name  = "${local.name_prefix}-document-events"
   dlq_name    = "${local.name_prefix}-document-events-dlq"
 

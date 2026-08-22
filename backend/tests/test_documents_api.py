@@ -20,6 +20,15 @@ def test_health_returns_ok() -> None:
     response = client.get("/health")
 
     assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_ready_returns_dependency_status() -> None:
+    client = create_test_client()
+
+    response = client.get("/ready")
+
+    assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
     assert body["dependencies"] == {"s3": "ok", "dynamodb": "ok", "sqs": "ok"}
@@ -102,7 +111,7 @@ class FailingDocumentStore:
     def get(self, document_id: str) -> Document | None:
         raise RuntimeError("database unavailable")
 
-    def get_content(self, document_id: str) -> str | None:
+    def get_content(self, document_id: str) -> bytes | None:
         raise RuntimeError("storage unavailable")
 
     def publish_created(self, document_id: str) -> None:
@@ -115,10 +124,10 @@ class FailingDocumentStore:
         return {"s3": "error", "dynamodb": "error", "sqs": "error"}
 
 
-def test_health_reports_dependency_status() -> None:
+def test_ready_reports_dependency_status() -> None:
     client = TestClient(create_app(document_service=DocumentService(store=FailingDocumentStore())))
 
-    response = client.get("/health")
+    response = client.get("/ready")
 
     assert response.status_code == 200
     body = response.json()
@@ -188,7 +197,9 @@ def test_delete_returns_500_when_infrastructure_fails() -> None:
     assert response.json() == {"detail": "Document could not be deleted"}
 
 
-def test_main_module_lazy_app_attribute() -> None:
+def test_main_module_lazy_app_attribute(monkeypatch) -> None:
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
     import app.main as main_module
 
     app_obj = main_module.app

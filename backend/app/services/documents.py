@@ -29,7 +29,7 @@ class DocumentStore(Protocol):
     def get(self, document_id: str) -> Document | None:  # pragma: no cover
         pass
 
-    def get_content(self, document_id: str) -> str | None:  # pragma: no cover
+    def get_content(self, document_id: str) -> bytes | None:  # pragma: no cover
         pass
 
     def delete(self, document_id: str) -> None:  # pragma: no cover
@@ -55,8 +55,9 @@ class InMemoryDocumentStore:
     def get(self, document_id: str) -> Document | None:
         return self._documents.get(document_id)
 
-    def get_content(self, document_id: str) -> str | None:
-        return self._content.get(document_id)
+    def get_content(self, document_id: str) -> bytes | None:
+        content = self._content.get(document_id)
+        return content.encode("utf-8") if content is not None else None
 
     def delete(self, document_id: str) -> None:
         self._documents.pop(document_id, None)
@@ -114,7 +115,7 @@ class DocumentService:
             raise DocumentNotFoundError(document_id)
         return document
 
-    def get_document_content(self, document_id: str) -> str:
+    def get_document_content(self, document_id: str) -> bytes:
         try:
             content = self._store.get_content(document_id)
         except Exception as exc:

@@ -56,7 +56,7 @@ variable "sqs_queue_arn" {
 variable "sqs_batch_size" {
   type        = number
   description = "Maximum number of messages per Lambda invocation."
-  default     = 10
+  default     = 1
 }
 
 variable "tags" {

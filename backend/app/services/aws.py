@@ -1,5 +1,6 @@
 import json
 import logging
+import threading
 from datetime import UTC, datetime
 from typing import Any
 
@@ -29,25 +30,34 @@ class AwsDocumentStore:
         self._sqs_client = None
         self._table_ref = None
         self._queue_url: str | None = None
+        self._init_lock = threading.Lock()
 
     def _get_s3(self):
         if self._s3_client is None:
-            self._s3_client = boto3.client("s3", **self._client_config)
+            with self._init_lock:
+                if self._s3_client is None:
+                    self._s3_client = boto3.client("s3", **self._client_config)
         return self._s3_client
 
     def _get_dynamodb(self):
         if self._dynamodb_resource is None:
-            self._dynamodb_resource = boto3.resource("dynamodb", **self._client_config)
+            with self._init_lock:
+                if self._dynamodb_resource is None:
+                    self._dynamodb_resource = boto3.resource("dynamodb", **self._client_config)
         return self._dynamodb_resource
 
     def _get_sqs(self):
         if self._sqs_client is None:
-            self._sqs_client = boto3.client("sqs", **self._client_config)
+            with self._init_lock:
+                if self._sqs_client is None:
+                    self._sqs_client = boto3.client("sqs", **self._client_config)
         return self._sqs_client
 
     def _get_table(self):
         if self._table_ref is None:
-            self._table_ref = self._get_dynamodb().Table(self._table_name)
+            with self._init_lock:
+                if self._table_ref is None:
+                    self._table_ref = self._get_dynamodb().Table(self._table_name)
         return self._table_ref
 
     @property
@@ -73,7 +83,7 @@ class AwsDocumentStore:
             return None
         return self._deserialize_document(item)
 
-    def get_content(self, document_id: str) -> str | None:
+    def get_content(self, document_id: str) -> bytes | None:
         document = self.get(document_id)
         if document is None:
             return None
@@ -85,8 +95,7 @@ class AwsDocumentStore:
                 return None
             raise
 
-        body = response["Body"].read()
-        return body.decode("utf-8")
+        return response["Body"].read()
 
     def publish_created(self, document_id: str) -> None:
         message = {
@@ -108,8 +117,13 @@ class AwsDocumentStore:
             logger.warning("s3_delete_failed document_id=%s bucket=%s key=%s",
                            document_id, document.bucket, document.object_key, exc_info=True)
         try:
-            self._get_table().delete_item(Key={"id": document_id})
-        except ClientError:
+            self._get_table().delete_item(
+                Key={"id": document_id},
+                ConditionExpression="attribute_exists(id)",
+            )
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return
             logger.warning("dynamodb_delete_failed document_id=%s", document_id, exc_info=True)
 
     def _get_queue_url(self) -> str:

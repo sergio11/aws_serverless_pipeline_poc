@@ -1,4 +1,5 @@
 import logging
+import mimetypes
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
@@ -18,7 +19,12 @@ def get_document_service() -> DocumentService:
 
 
 @router.get("/health")
-def health(document_service: DocumentService = Depends(get_document_service)) -> dict:
+def health() -> dict:
+    return {"status": "ok"}
+
+
+@router.get("/ready")
+def ready(document_service: DocumentService = Depends(get_document_service)) -> dict:
     dependencies = document_service.health_check()
     return {"status": "ok", "dependencies": dependencies}
 
@@ -75,6 +81,7 @@ def get_document_content(
     document_service: DocumentService = Depends(get_document_service),
 ) -> Response:
     try:
+        document = document_service.get_document(document_id)
         content = document_service.get_document_content(document_id)
     except DocumentNotFoundError as exc:
         log_event(logging.INFO, "document_content_not_found", document_id=document_id)
@@ -83,7 +90,8 @@ def get_document_content(
         log_event(logging.ERROR, "document_content_read_failed", document_id=document_id, reason=str(exc))
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document content could not be read") from exc
 
-    return Response(content=content, media_type="text/plain")
+    media_type, _ = mimetypes.guess_type(document.name)
+    return Response(content=content, media_type=media_type or "application/octet-stream")
 
 
 @router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)

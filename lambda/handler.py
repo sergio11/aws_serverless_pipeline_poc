@@ -6,6 +6,7 @@ import os
 import signal
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -18,7 +19,7 @@ from botocore.exceptions import ClientError
 logger = logging.getLogger("lambda-worker")
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-MAX_LOCK_AGE_SECONDS = 300
+MAX_LOCK_AGE_SECONDS = 120
 _shutdown_event = threading.Event()
 
 
@@ -81,8 +82,8 @@ class WorkerSettings:
         return cls(
             aws_endpoint_url=os.getenv("AWS_ENDPOINT_URL", "http://localhost:4566"),
             aws_region=os.getenv("AWS_DEFAULT_REGION", "eu-west-1"),
-            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", "test"),
-            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "test"),
+            aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+            aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
             dynamodb_table=os.getenv("DYNAMODB_TABLE", "documents"),
             sqs_queue_name=os.getenv("SQS_QUEUE_NAME", "document-events"),
             poll_interval_seconds=int(os.getenv("WORKER_POLL_INTERVAL_SECONDS", "2")),
@@ -165,7 +166,9 @@ class DocumentProcessor:
                 ConditionExpression="attribute_not_exists(processing_owner) AND #status <> :processed",
                 ExpressionAttributeNames={"#status": "status"},
                 ExpressionAttributeValues={
-                    ":owner": os.environ.get("HOSTNAME", "unknown"),
+                    ":owner": os.environ.get("HOSTNAME")
+                           or os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
+                           or str(uuid.uuid4()),
                     ":started_at": datetime.now(UTC).isoformat(),
                     ":processed": DocumentStatus.PROCESSED,
                 },
@@ -184,7 +187,9 @@ class DocumentProcessor:
                 UpdateExpression="REMOVE processing_owner, processing_started_at",
                 ConditionExpression="processing_owner = :owner",
                 ExpressionAttributeValues={
-                    ":owner": os.environ.get("HOSTNAME", "unknown"),
+                    ":owner": os.environ.get("HOSTNAME")
+                           or os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
+                           or str(uuid.uuid4()),
                 },
             )
         except ClientError:

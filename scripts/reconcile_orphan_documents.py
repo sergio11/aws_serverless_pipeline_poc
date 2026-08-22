@@ -41,7 +41,7 @@ def scan_stale_documents(table, max_age_minutes: int) -> list[dict]:
             created_at = datetime.fromisoformat(item["created_at"]).astimezone(UTC)
             if created_at < cutoff:
                 stale.append(item)
-        last_key = response.get("LastKey")
+        last_key = response.get("LastEvaluatedKey")
         if not last_key:
             break
 

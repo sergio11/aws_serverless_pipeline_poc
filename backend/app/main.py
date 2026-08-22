@@ -7,8 +7,8 @@ from app.settings import Settings
 
 
 def create_app(document_service: DocumentService | None = None) -> FastAPI:
-    settings = Settings.from_environment()
     if document_service is None:
+        settings = Settings.from_environment()
         store = AwsDocumentStore(settings)
         document_service = DocumentService(store=store)
 

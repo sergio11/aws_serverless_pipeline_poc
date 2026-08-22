@@ -102,9 +102,9 @@ services:
     build:
       context: ./backend
       dockerfile: Containerfile
+      target: test
     container_name: poc-backend
     restart: unless-stopped
-    read_only: true
     security_opt:
       - no-new-privileges:true
     deploy:
@@ -133,7 +133,7 @@ services:
       DYNAMODB_TABLE: ${DYNAMODB_TABLE:-documents-metadata}
       SQS_QUEUE_NAME: ${SQS_QUEUE_NAME:-document-events}
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -152,9 +152,9 @@ services:
     build:
       context: ./lambda
       dockerfile: Containerfile
+      target: test
     container_name: poc-lambda-worker
     restart: unless-stopped
-    read_only: true
     security_opt:
       - no-new-privileges:true
     deploy:

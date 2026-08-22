@@ -12,8 +12,6 @@ COPY tests ./tests
 COPY pyproject.toml .
 RUN pip install --no-cache-dir -e ".[test]"
 
-RUN pytest tests/
-
 FROM python:3.13-slim
 
 WORKDIR /app

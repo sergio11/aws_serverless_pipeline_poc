@@ -119,6 +119,11 @@ class AwsDocumentStore:
         if document is None:
             return
         try:
+            self._get_s3().delete_object(Bucket=document.bucket, Key=document.object_key)
+        except ClientError:
+            logger.warning("s3_delete_failed document_id=%s bucket=%s key=%s",
+                           document_id, document.bucket, document.object_key, exc_info=True)
+        try:
             self._get_table().delete_item(
                 Key={"id": document_id},
                 ConditionExpression="attribute_exists(id)",
@@ -127,11 +132,6 @@ class AwsDocumentStore:
             if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
                 return
             raise
-        try:
-            self._get_s3().delete_object(Bucket=document.bucket, Key=document.object_key)
-        except ClientError:
-            logger.warning("s3_delete_failed_orphan_risk document_id=%s bucket=%s key=%s",
-                           document_id, document.bucket, document.object_key, exc_info=True)
 
     def _get_queue_url(self) -> str:
         if self._queue_url is None:

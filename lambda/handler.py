@@ -8,6 +8,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 import boto3
@@ -17,6 +18,7 @@ from botocore.exceptions import ClientError
 logger = logging.getLogger("lambda-worker")
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
+MAX_LOCK_AGE_SECONDS = 300
 _shutdown_event = threading.Event()
 
 
@@ -57,7 +59,8 @@ def log_event(level: int, event: str, **fields: Any) -> None:
     logger.log(level, json.dumps(payload, default=str))
 
 
-class DocumentStatus:
+class DocumentStatus(StrEnum):
+    CREATED = "CREATED"
     PROCESSING = "PROCESSING"
     PROCESSED = "PROCESSED"
     FAILED = "FAILED"
@@ -139,14 +142,31 @@ class DocumentProcessor:
 
     def _acquire_processing_lock(self, document_id: str) -> bool:
         """Intenta adquirir lock de procesamiento de forma atómica."""
+        item = self._get_document(document_id)
+        if item is not None:
+            existing_owner = item.get("processing_owner")
+            if existing_owner:
+                started_at = item.get("processing_started_at")
+                if started_at:
+                    lock_age = (datetime.now(UTC) - datetime.fromisoformat(started_at).astimezone(UTC)).total_seconds()
+                    if lock_age > MAX_LOCK_AGE_SECONDS:
+                        log_event(logging.WARNING, "lock_expired_releasing",
+                                  document_id=document_id, lock_age=lock_age)
+                        self._release_processing_lock(document_id)
+                    else:
+                        return False
+                else:
+                    return False
+
         try:
             self._table.update_item(
                 Key={"id": document_id},
-                UpdateExpression="SET processing_owner = :owner",
+                UpdateExpression="SET processing_owner = :owner, processing_started_at = :started_at",
                 ConditionExpression="attribute_not_exists(processing_owner) AND #status <> :processed",
                 ExpressionAttributeNames={"#status": "status"},
                 ExpressionAttributeValues={
                     ":owner": os.environ.get("HOSTNAME", "unknown"),
+                    ":started_at": datetime.now(UTC).isoformat(),
                     ":processed": DocumentStatus.PROCESSED,
                 },
             )
@@ -161,7 +181,7 @@ class DocumentProcessor:
         try:
             self._table.update_item(
                 Key={"id": document_id},
-                UpdateExpression="REMOVE processing_owner",
+                UpdateExpression="REMOVE processing_owner, processing_started_at",
             )
         except ClientError:
             pass

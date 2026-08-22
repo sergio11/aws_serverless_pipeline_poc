@@ -18,8 +18,9 @@ def get_document_service() -> DocumentService:
 
 
 @router.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health(document_service: DocumentService = Depends(get_document_service)) -> dict:
+    dependencies = document_service.health_check()
+    return {"status": "ok", "dependencies": dependencies}
 
 
 @router.post(

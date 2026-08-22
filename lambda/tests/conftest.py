@@ -40,8 +40,14 @@ class FakeTable:
                 self.item["processed_at"] = values[":processed_at"]
             if ":owner" in values:
                 self.item["processing_owner"] = values[":owner"]
-            if "REMOVE" in kwargs.get("UpdateExpression", ""):
-                self.item.pop("processing_owner", None)
+            if ":started_at" in values:
+                self.item["processing_started_at"] = values[":started_at"]
+            remove_expr = kwargs.get("UpdateExpression", "")
+            if "REMOVE" in remove_expr:
+                if "processing_owner" in remove_expr:
+                    self.item.pop("processing_owner", None)
+                if "processing_started_at" in remove_expr:
+                    self.item.pop("processing_started_at", None)
 
     def fail_update_with(self, error: Exception) -> None:
         self._raise_on_update = error

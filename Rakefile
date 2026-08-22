@@ -16,7 +16,6 @@ INTEGRATION_SERVICE = ENV.fetch("INTEGRATION_SERVICE", "integration")
 INTEGRATION_CONTAINER = ENV.fetch("INTEGRATION_CONTAINER", "poc-integration")
 TERRAFORM_DIR = ENV.fetch("TERRAFORM_DIR", "terraform")
 TERRAFORM_SERVICE = ENV.fetch("TERRAFORM_SERVICE", "terraform")
-TERRAFORM_CONTAINER = ENV.fetch("TERRAFORM_CONTAINER", "poc-terraform")
 TERRAFORM_VOLUME = ENV.fetch("TERRAFORM_VOLUME", "terraform-workdir")
 TERRAFORM_VAR_FILE = ENV.fetch("TERRAFORM_VAR_FILE", "environments/local/terraform.tfvars")
 
@@ -35,15 +34,14 @@ end
 
 def sync_terraform_to_volume
   ensure_terraform_volume
+  host_path = File.expand_path(TERRAFORM_DIR)
   run_command(
-    "podman", "create", "--name", "#{TERRAFORM_CONTAINER}-sync",
-    "--entrypoint", "sh",
+    "podman", "run", "--rm",
+    "-v", "#{host_path}:/src:ro",
     "-v", "#{TERRAFORM_VOLUME}:/terraform",
-    "-w", "/terraform",
-    "aws-local-poc_terraform", "-c", "true"
-  )
-  run_command(
-    "podman", "cp", "#{TERRAFORM_DIR}/.", "#{TERRAFORM_CONTAINER}-sync:/terraform"
+    "--entrypoint", "sh",
+    "aws-local-poc_terraform", "-c",
+    "cp -r /src/. /terraform/"
   )
   # Fix permissions lost during copy from Windows host
   run_command(
@@ -53,21 +51,18 @@ def sync_terraform_to_volume
     "aws-local-poc_terraform", "-c",
     "find /terraform/.terraform -type f -name 'terraform-provider-*' -exec chmod +x {} +; true"
   )
-  run_command("podman", "rm", "-f", "#{TERRAFORM_CONTAINER}-sync")
 end
 
 def sync_terraform_from_volume
+  host_path = File.expand_path(TERRAFORM_DIR)
   run_command(
-    "podman", "create", "--name", "#{TERRAFORM_CONTAINER}-sync-back",
-    "--entrypoint", "sh",
+    "podman", "run", "--rm",
     "-v", "#{TERRAFORM_VOLUME}:/terraform",
-    "-w", "/terraform",
-    "aws-local-poc_terraform", "-c", "true"
+    "-v", "#{host_path}:/host",
+    "--entrypoint", "sh",
+    "aws-local-poc_terraform", "-c",
+    "cp -r /terraform/. /host/"
   )
-  run_command(
-    "podman", "cp", "#{TERRAFORM_CONTAINER}-sync-back:/terraform/.", "#{TERRAFORM_DIR}"
-  )
-  run_command("podman", "rm", "-f", "#{TERRAFORM_CONTAINER}-sync-back")
 end
 
 def run_terraform(*args)
@@ -84,20 +79,6 @@ def run_terraform(*args)
     "aws-local-poc_terraform", *args
   )
   sync_terraform_from_volume
-end
-
-def sync_terraform_from_volume
-  # Copy state files back to host
-  run_command(
-    "podman", "create", "--name", "#{TERRAFORM_CONTAINER}-sync-back",
-    "-v", "#{TERRAFORM_VOLUME}:/terraform",
-    "-w", "/terraform",
-    "aws-local-poc_terraform", "true"
-  )
-  run_command(
-    "podman", "cp", "#{TERRAFORM_CONTAINER}-sync-back:/terraform/.", "#{TERRAFORM_DIR}"
-  )
-  run_command("podman", "rm", "-f", "#{TERRAFORM_CONTAINER}-sync-back")
 end
 
 def terraform_output_json
@@ -288,6 +269,18 @@ namespace :infra do
 
   desc "Apply infrastructure, upload Lambda, and generate .env"
   task deploy: [:apply, :upload_lambda, :env]
+
+  desc "Reconcile orphaned documents stuck in CREATED or PROCESSING state"
+  task :reconcile do
+    max_age = ENV.fetch("RECONCILE_MAX_AGE_MINUTES", "10")
+    run_command(
+      "python", "scripts/reconcile_orphan_documents.py",
+      "--endpoint-url", FLOCI_ENDPOINT,
+      "--table", "documents",
+      "--queue", "document-events",
+      "--max-age-minutes", max_age,
+    )
+  end
 end
 
 namespace :backend do

@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -383,7 +384,7 @@ def test_processor_tolerates_release_lock_error() -> None:
 
     def fail_on_remove(**kwargs):
         expr = kwargs.get("UpdateExpression", "")
-        if "REMOVE processing_owner" in expr:
+        if "REMOVE" in expr and "processing_owner" in expr:
             raise ClientError(
                 {"Error": {"Code": "ProvisionedThroughputExceededException"}},
                 "UpdateItem",
@@ -396,3 +397,24 @@ def test_processor_tolerates_release_lock_error() -> None:
     result = processor.process("doc-1")
 
     assert result == "processed"
+
+
+def test_processor_force_releases_expired_lock() -> None:
+    expired_at = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
+    item = {
+        "id": "doc-1",
+        "bucket": "poc-local-documents",
+        "object_key": "documents/doc-1/example.txt",
+        "status": "CREATED",
+        "processing_owner": "stale-worker",
+        "processing_started_at": expired_at,
+    }
+    table = FakeTable(item)
+    processor = DocumentProcessor(FakeS3Client(), FakeDynamoResource(table), "documents")
+
+    result = processor.process("doc-1")
+
+    assert result == "processed"
+    assert item["status"] == DocumentStatus.PROCESSED
+    assert "processing_owner" not in item
+    assert "processing_started_at" not in item

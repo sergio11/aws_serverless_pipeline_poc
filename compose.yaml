@@ -31,7 +31,7 @@ services:
       start_period: 5s
 
   floci-ui:
-    image: floci/floci-ui:latest
+    image: ${FLOCI_UI_IMAGE:-floci/floci-ui:1.5.11}
     container_name: poc-floci-ui
     ports:
       - "4500:4500"

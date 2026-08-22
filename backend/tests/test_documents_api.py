@@ -20,7 +20,9 @@ def test_health_returns_ok() -> None:
     response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["dependencies"] == {"s3": "ok", "dynamodb": "ok", "sqs": "ok"}
 
 
 def test_create_and_read_document() -> None:
@@ -109,6 +111,20 @@ class FailingDocumentStore:
     def delete(self, document_id: str) -> None:
         pass
 
+    def health_check(self) -> dict[str, str]:
+        return {"s3": "error", "dynamodb": "error", "sqs": "error"}
+
+
+def test_health_reports_dependency_status() -> None:
+    client = TestClient(create_app(document_service=DocumentService(store=FailingDocumentStore())))
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["dependencies"] == {"s3": "error", "dynamodb": "error", "sqs": "error"}
+
 
 def test_create_document_returns_500_when_infrastructure_fails() -> None:
     client = TestClient(create_app(document_service=DocumentService(store=FailingDocumentStore())))
@@ -138,3 +154,21 @@ def test_content_returns_500_when_infrastructure_fails() -> None:
 
     assert response.status_code == 500
     assert response.json() == {"detail": "Document content could not be read"}
+
+
+def test_main_module_lazy_app_attribute() -> None:
+    import app.main as main_module
+
+    app_obj = main_module.app
+    from fastapi import FastAPI
+    assert isinstance(app_obj, FastAPI)
+
+
+def test_main_module_raises_for_unknown_attribute() -> None:
+    import app.main as main_module
+
+    try:
+        _ = main_module.nonexistent_attribute
+        assert False, "Should have raised AttributeError"
+    except AttributeError:
+        pass

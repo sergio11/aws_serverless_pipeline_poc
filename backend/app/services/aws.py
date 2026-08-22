@@ -114,6 +114,25 @@ class AwsDocumentStore:
             self._queue_url = response["QueueUrl"]
         return self._queue_url
 
+    def health_check(self) -> dict[str, str]:
+        result: dict[str, str] = {}
+        try:
+            self._get_s3().list_buckets()
+            result["s3"] = "ok"
+        except Exception:
+            result["s3"] = "error"
+        try:
+            self._get_dynamodb().meta.client.list_tables()
+            result["dynamodb"] = "ok"
+        except Exception:
+            result["dynamodb"] = "error"
+        try:
+            self._get_queue_url()
+            result["sqs"] = "ok"
+        except Exception:
+            result["sqs"] = "error"
+        return result
+
     def _serialize_document(self, document: Document) -> dict[str, Any]:
         item: dict[str, Any] = {
             "id": document.id,

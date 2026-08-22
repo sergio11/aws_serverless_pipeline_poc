@@ -18,4 +18,7 @@ def create_app(document_service: DocumentService | None = None) -> FastAPI:
     return app
 
 
-app = create_app()
+def __getattr__(name: str):
+    if name == "app":
+        return create_app()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

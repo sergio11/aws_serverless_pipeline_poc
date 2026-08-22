@@ -35,6 +35,9 @@ class DocumentStore(Protocol):
     def publish_created(self, document_id: str) -> None:  # pragma: no cover
         pass
 
+    def health_check(self) -> dict[str, str]:  # pragma: no cover
+        pass
+
 
 class InMemoryDocumentStore:
     def __init__(self, bucket_name: str) -> None:
@@ -62,10 +65,16 @@ class InMemoryDocumentStore:
     def bucket_name(self) -> str:
         return self._bucket_name
 
+    def health_check(self) -> dict[str, str]:
+        return {"s3": "ok", "dynamodb": "ok", "sqs": "ok"}
+
 
 class DocumentService:
     def __init__(self, store: DocumentStore) -> None:
         self._store = store
+
+    def health_check(self) -> dict[str, str]:
+        return self._store.health_check()
 
     def create_document(self, name: str, content: str) -> Document:
         document_id = uuid4().hex

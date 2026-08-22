@@ -18,6 +18,7 @@ venv/
 *.tfstate
 *.tfstate.*
 terraform/.terraform.lock.hcl
+terraform/lambda-deployment.zip
 
 data/
 tmp/

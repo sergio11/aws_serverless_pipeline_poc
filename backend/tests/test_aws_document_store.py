@@ -12,6 +12,7 @@ class FakeS3Client:
     def __init__(self) -> None:
         self.objects: dict[tuple[str, str], bytes] = {}
         self._get_error: ClientError | None = None
+        self._list_buckets_error: Exception | None = None
 
     def put_object(self, Bucket: str, Key: str, Body: bytes, ContentType: str) -> None:
         self.objects[(Bucket, Key)] = Body
@@ -24,8 +25,16 @@ class FakeS3Client:
     def delete_object(self, Bucket: str, Key: str) -> None:
         self.objects.pop((Bucket, Key), None)
 
+    def list_buckets(self) -> dict[str, list]:
+        if self._list_buckets_error:
+            raise self._list_buckets_error
+        return {"Buckets": []}
+
     def fail_get_with(self, error: ClientError) -> None:
         self._get_error = error
+
+    def fail_list_buckets_with(self, error: Exception) -> None:
+        self._list_buckets_error = error
 
 
 class FakeTable:
@@ -43,12 +52,31 @@ class FakeTable:
         self.items.pop(Key["id"], None)
 
 
+class FakeDynamoClient:
+    def __init__(self) -> None:
+        self._list_tables_error: Exception | None = None
+
+    def list_tables(self) -> dict[str, list]:
+        if self._list_tables_error:
+            raise self._list_tables_error
+        return {"TableNames": []}
+
+    def fail_list_tables_with(self, error: Exception) -> None:
+        self._list_tables_error = error
+
+
 class FakeDynamoResource:
     def __init__(self, table: FakeTable) -> None:
         self.table = table
+        self.meta = self
 
     def Table(self, table_name: str) -> FakeTable:
         return self.table
+
+    def __getattr__(self, name: str):
+        if name == "client":
+            return FakeDynamoClient()
+        raise AttributeError(name)
 
 
 class FakeSqsClient:
@@ -220,3 +248,57 @@ def test_delete_tolerates_dynamodb_error(monkeypatch) -> None:
     store.save(document, "Hello AWS")
 
     store.delete("doc-1")
+
+
+def test_health_check_all_ok(monkeypatch) -> None:
+    store = _make_store(monkeypatch)
+    result = store.health_check()
+    assert result == {"s3": "ok", "dynamodb": "ok", "sqs": "ok"}
+
+
+def test_health_check_reports_s3_error(monkeypatch) -> None:
+    s3 = FakeS3Client()
+    s3.fail_list_buckets_with(RuntimeError("S3 unavailable"))
+    store = _make_store(monkeypatch, s3=s3)
+    result = store.health_check()
+    assert result["s3"] == "error"
+    assert result["dynamodb"] == "ok"
+    assert result["sqs"] == "ok"
+
+
+def test_health_check_reports_dynamodb_error(monkeypatch) -> None:
+    table = FakeTable()
+    dynamo = FakeDynamoResource(table)
+    dynamo.meta = type("obj", (), {"client": type("c", (), {"list_tables": staticmethod(lambda: (_ for _ in ()).throw(RuntimeError("DynamoDB unavailable")))})()})()
+
+    def fake_resource(service_name: str, **kwargs):
+        return dynamo
+
+    monkeypatch.setattr("app.services.aws.boto3.resource", fake_resource)
+    monkeypatch.setattr("app.services.aws.boto3.client", lambda s, **kw: FakeSqsClient())
+
+    store = AwsDocumentStore(
+        Settings(
+            aws_endpoint_url="http://floci:4566",
+            aws_region="eu-west-1",
+            aws_access_key_id="test",
+            aws_secret_access_key="test",
+            s3_bucket="poc-local-documents",
+            dynamodb_table="documents",
+            sqs_queue_name="document-events",
+        )
+    )
+    result = store.health_check()
+    assert result["dynamodb"] == "error"
+
+
+def test_health_check_reports_sqs_error(monkeypatch) -> None:
+    class FailingSqsClient:
+        def get_queue_url(self, QueueName: str) -> dict[str, str]:
+            raise RuntimeError("SQS unavailable")
+
+    store = _make_store(monkeypatch, sqs=FailingSqsClient())
+    result = store.health_check()
+    assert result["sqs"] == "error"
+    assert result["s3"] == "ok"
+    assert result["dynamodb"] == "ok"

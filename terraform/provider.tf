@@ -10,9 +10,9 @@ provider "aws" {
   # de account_id. NO usar en producción con AWS real.
   # Si se necesita AWS real, eliminar esta línea y usar IAM roles o
   # variables de entorno para credenciales.
-  skip_requesting_account_id  = true
+  skip_requesting_account_id = true
 
-  skip_region_validation      = true
+  skip_region_validation = true
 
   endpoints {
     dynamodb = var.aws_endpoint

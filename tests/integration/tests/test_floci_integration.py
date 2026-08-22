@@ -1,7 +1,7 @@
 import json
 import os
 from io import BytesIO
-from uuid import uuid4
+from ulid import ULID
 
 import boto3
 import pytest
@@ -27,7 +27,7 @@ def _aws_config():
 class TestS3Integration:
     def test_put_and_get_object(self):
         s3 = boto3.client("s3", **_aws_config())
-        key = f"integration-test/{uuid4().hex}.txt"
+        key = f"integration-test/{ULID()}.txt"
         body = b"Hello Floci S3"
 
         s3.put_object(Bucket=S3_BUCKET, Key=key, Body=body, ContentType="text/plain")
@@ -47,7 +47,7 @@ class TestS3Integration:
 
     def test_put_and_list_objects(self):
         s3 = boto3.client("s3", **_aws_config())
-        prefix = f"integration-test/{uuid4().hex}/"
+        prefix = f"integration-test/{ULID()}/"
         key = f"{prefix}file.txt"
 
         s3.put_object(Bucket=S3_BUCKET, Key=key, Body=b"list test", ContentType="text/plain")
@@ -63,7 +63,7 @@ class TestDynamoDBIntegration:
     def test_put_and_get_item(self):
         dynamodb = boto3.resource("dynamodb", **_aws_config())
         table = dynamodb.Table(DYNAMODB_TABLE)
-        item_id = f"integration-test-{uuid4().hex}"
+        item_id = f"integration-test-{ULID()}"
 
         table.put_item(Item={
             "id": item_id,
@@ -92,7 +92,7 @@ class TestDynamoDBIntegration:
     def test_update_item_status(self):
         dynamodb = boto3.resource("dynamodb", **_aws_config())
         table = dynamodb.Table(DYNAMODB_TABLE)
-        item_id = f"integration-test-{uuid4().hex}"
+        item_id = f"integration-test-{ULID()}"
 
         table.put_item(Item={
             "id": item_id,

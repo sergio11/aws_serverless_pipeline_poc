@@ -1,7 +1,7 @@
 import logging
 from datetime import UTC, datetime
 from typing import Protocol
-from uuid import uuid4
+from ulid import ULID
 
 from app.domain import Document, DocumentStatus
 from app.logging import log_event
@@ -84,7 +84,7 @@ class DocumentService:
         return self._store.health_check()
 
     def create_document(self, name: str, content: str) -> Document:
-        document_id = uuid4().hex
+        document_id = str(ULID())
         document = Document(
             id=document_id,
             name=name,

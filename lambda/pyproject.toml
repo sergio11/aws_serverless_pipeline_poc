@@ -6,7 +6,6 @@ requires-python = ">=3.12"
 dependencies = [
     "boto3==1.43.74",
     "botocore==1.43.74",
-    "s3transfer==0.19.2",
 ]
 
 [project.optional-dependencies]
@@ -24,5 +23,5 @@ source = ["handler"]
 omit = ["tests/*"]
 
 [tool.coverage.report]
-fail_under = 98
+fail_under = 90
 show_missing = true

@@ -2,7 +2,7 @@ import json
 import os
 import subprocess
 import time
-from uuid import uuid4
+from ulid import ULID
 
 import boto3
 import httpx
@@ -34,7 +34,7 @@ def test_document_workflow_reaches_processed_status() -> None:
     backend until the document reaches PROCESSED status, then validates
     S3 content, DynamoDB metadata, and SQS state.
     """
-    unique_name = f"e2e-{uuid4().hex}.txt"
+    unique_name = f"e2e-{ULID()}.txt"
     content = "Hello E2E"
 
     with httpx.Client(timeout=10) as client:

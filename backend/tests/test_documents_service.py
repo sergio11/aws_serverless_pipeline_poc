@@ -9,7 +9,7 @@ from app.services.documents import (
 )
 
 
-def test_create_document的成功路径() -> None:
+def test_create_document_success_path() -> None:
     store = InMemoryDocumentStore(bucket_name="test")
     service = DocumentService(store)
 

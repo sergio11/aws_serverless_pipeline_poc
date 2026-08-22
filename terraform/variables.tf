@@ -40,3 +40,9 @@ variable "api_endpoint" {
   description = "Local backend API endpoint shown as Terraform output."
   default     = "http://localhost:8000"
 }
+
+variable "lambda_aws_endpoint_url" {
+  type        = string
+  description = "AWS endpoint URL used inside Lambda function containers."
+  default     = "http://floci:4566"
+}

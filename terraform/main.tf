@@ -44,9 +44,18 @@ module "compute" {
   memory_size     = local.lambda_memory_size
   sqs_queue_arn   = module.messaging.queue_arn
   sqs_batch_size  = 10
+
+  # DEPLOY ORDER: The Lambda function references an S3 object that must exist.
+  # Execute in this order:
+  #   1. terraform apply (creates S3 bucket + other infra)
+  #   2. scripts/package-lambda.sh (creates worker.zip)
+  #   3. aws s3 cp tmp/lambda/worker.zip s3://<bucket>/lambda/document-processor.zip
+  #   4. terraform apply again (now S3 object exists, Lambda creation succeeds)
+  #
+  # Alternatively, use: rake infra:deploy (automates the full sequence)
   environment_variables = {
-    AWS_ENDPOINT_URL   = "http://floci:4566"
-    AWS_DEFAULT_REGION = "eu-west-1"
+    AWS_ENDPOINT_URL   = var.lambda_aws_endpoint_url
+    AWS_DEFAULT_REGION = var.aws_region
     DYNAMODB_TABLE     = local.table_name
     SQS_QUEUE_NAME     = local.queue_name
   }

@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from io import BytesIO
 
+import pytest
 from botocore.exceptions import ClientError
 
 from app.domain import Document, DocumentStatus
@@ -309,17 +310,16 @@ class FailingDeleteDynamoTable(FakeTable):
         raise ClientError({"Error": {"Code": "ProvisionedThroughputExceededException"}}, "DeleteItem")
 
 
-def test_delete_returns_early_on_dynamodb_error(monkeypatch) -> None:
+def test_delete_propagates_dynamodb_error(monkeypatch) -> None:
     table = FailingDeleteDynamoTable()
     store = _make_store(monkeypatch, table=table)
     document = _make_document()
     store.save(document, "Hello AWS")
 
-    store.delete("doc-1")
+    with pytest.raises(ClientError):
+        store.delete("doc-1")
 
     assert "doc-1" in table.items
-
-    store.delete("doc-1")
 
 
 def test_health_check_all_ok(monkeypatch) -> None:

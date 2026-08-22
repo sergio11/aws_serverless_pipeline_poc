@@ -5,6 +5,11 @@ services:
     image: ${FLOCI_IMAGE:-floci/floci:1.5.11}
     container_name: poc-floci
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
     logging:
       driver: json-file
       options:
@@ -26,10 +31,14 @@ services:
       FLOCI_SERVICES_LAMBDA_DEFAULT_MEMORY_MB: "128"
     volumes:
       - ./data/floci:/app/data
-      # SECURITY: Docker socket required for Floci Lambda simulation via Docker-in-Docker.
+      # SECURITY: Docker socket is REQUIRED for Floci Lambda simulation via Docker-in-Docker.
       # This grants FULL control of the host Docker daemon to the container.
       # NEVER use in production. For real AWS Lambda emulation, use Floci's native
       # Lambda support without Docker socket or use rootless Podman socket with TLS.
+      #
+      # To disable Lambda simulation (recommended for security), set:
+      #   FLOCI_SERVICES_LAMBDA_ENABLED: "false"
+      # and remove the docker.sock volume mount below.
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - poc-network
@@ -44,6 +53,11 @@ services:
     image: ${FLOCI_UI_IMAGE:-floci/floci-ui:1.5.11}
     container_name: poc-floci-ui
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
     logging:
       driver: json-file
       options:
@@ -68,6 +82,11 @@ services:
       dockerfile: Containerfile
     container_name: poc-terraform
     restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
     working_dir: /terraform
     volumes:
       - terraform-workdir:/terraform
@@ -88,6 +107,11 @@ services:
     read_only: true
     security_opt:
       - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
     tmpfs:
       - /tmp
     logging:
@@ -133,6 +157,11 @@ services:
     read_only: true
     security_opt:
       - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
     tmpfs:
       - /tmp
     logging:
@@ -171,6 +200,11 @@ services:
       dockerfile: Containerfile
     container_name: poc-integration
     restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
     logging:
       driver: json-file
       options:
@@ -200,6 +234,11 @@ services:
       dockerfile: Containerfile
     container_name: poc-e2e
     restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
     logging:
       driver: json-file
       options:
@@ -221,8 +260,9 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-      lambda-worker:
-        condition: service_healthy
+      # NOTE: E2E tests use the Terraform-managed Lambda function via Floci,
+      # not the polling worker. Do NOT add lambda-worker here.
+      # The Terraform Lambda is provisioned by `rake infra:deploy` before tests run.
     networks:
       - poc-network
 

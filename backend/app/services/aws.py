@@ -126,8 +126,7 @@ class AwsDocumentStore:
         except ClientError as exc:
             if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
                 return
-            logger.warning("dynamodb_delete_failed document_id=%s", document_id, exc_info=True)
-            return
+            raise
         try:
             self._get_s3().delete_object(Bucket=document.bucket, Key=document.object_key)
         except ClientError:

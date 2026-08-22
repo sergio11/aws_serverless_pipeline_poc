@@ -32,6 +32,9 @@ class DocumentStore(Protocol):
     def get_content(self, document_id: str) -> str | None:  # pragma: no cover
         pass
 
+    def delete(self, document_id: str) -> None:  # pragma: no cover
+        pass
+
     def publish_created(self, document_id: str) -> None:  # pragma: no cover
         pass
 
@@ -54,6 +57,10 @@ class InMemoryDocumentStore:
 
     def get_content(self, document_id: str) -> str | None:
         return self._content.get(document_id)
+
+    def delete(self, document_id: str) -> None:
+        self._documents.pop(document_id, None)
+        self._content.pop(document_id, None)
 
     def publish_created(self, document_id: str) -> None:
         return None
@@ -115,3 +122,15 @@ class DocumentService:
         if content is None:
             raise DocumentNotFoundError(document_id)
         return content
+
+    def delete_document(self, document_id: str) -> None:
+        try:
+            document = self._store.get(document_id)
+        except Exception as exc:
+            raise DocumentInfrastructureError("document lookup failed for deletion") from exc
+        if document is None:
+            raise DocumentNotFoundError(document_id)
+        try:
+            self._store.delete(document_id)
+        except Exception as exc:
+            raise DocumentInfrastructureError("document deletion failed") from exc

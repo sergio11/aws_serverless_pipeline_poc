@@ -156,6 +156,38 @@ def test_content_returns_500_when_infrastructure_fails() -> None:
     assert response.json() == {"detail": "Document content could not be read"}
 
 
+def test_delete_document_returns_204() -> None:
+    client = create_test_client()
+    create_response = client.post(
+        "/documents",
+        json={"name": "example.txt", "content": "Hello AWS"},
+    )
+    document_id = create_response.json()["id"]
+
+    response = client.delete(f"/documents/{document_id}")
+
+    assert response.status_code == 204
+    assert client.get(f"/documents/{document_id}").status_code == 404
+
+
+def test_delete_unknown_document_returns_404() -> None:
+    client = create_test_client()
+
+    response = client.delete("/documents/missing")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Document not found"}
+
+
+def test_delete_returns_500_when_infrastructure_fails() -> None:
+    client = TestClient(create_app(document_service=DocumentService(store=FailingDocumentStore())))
+
+    response = client.delete("/documents/example")
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Document could not be deleted"}
+
+
 def test_main_module_lazy_app_attribute() -> None:
     import app.main as main_module
 

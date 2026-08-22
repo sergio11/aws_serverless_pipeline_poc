@@ -84,3 +84,20 @@ def get_document_content(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document content could not be read") from exc
 
     return Response(content=content, media_type="text/plain")
+
+
+@router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_document(
+    document_id: str,
+    document_service: DocumentService = Depends(get_document_service),
+) -> Response:
+    try:
+        document_service.delete_document(document_id)
+    except DocumentNotFoundError as exc:
+        log_event(logging.INFO, "document_not_found_for_deletion", document_id=document_id)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found") from exc
+    except DocumentInfrastructureError as exc:
+        log_event(logging.ERROR, "document_deletion_failed", document_id=document_id, reason=str(exc))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document could not be deleted") from exc
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

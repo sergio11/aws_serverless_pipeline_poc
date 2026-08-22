@@ -17,6 +17,6 @@ class Document:
     bucket: str
     object_key: str
     size: int
-    status: str
+    status: DocumentStatus
     created_at: datetime
     processed_at: datetime | None = None

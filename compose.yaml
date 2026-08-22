@@ -26,8 +26,10 @@ services:
       FLOCI_SERVICES_LAMBDA_DEFAULT_MEMORY_MB: "128"
     volumes:
       - ./data/floci:/app/data
-      # SECURITY: Docker socket required for Lambda simulation via Floci.
-      # Never use in production — grants full daemon control to the container.
+      # SECURITY: Docker socket required for Floci Lambda simulation via Docker-in-Docker.
+      # This grants FULL control of the host Docker daemon to the container.
+      # NEVER use in production. For real AWS Lambda emulation, use Floci's native
+      # Lambda support without Docker socket or use rootless Podman socket with TLS.
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - poc-network
@@ -83,6 +85,11 @@ services:
       dockerfile: Containerfile
     container_name: poc-backend
     restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
     logging:
       driver: json-file
       options:
@@ -121,6 +128,11 @@ services:
       dockerfile: Containerfile
     container_name: poc-lambda-worker
     restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
     logging:
       driver: json-file
       options:

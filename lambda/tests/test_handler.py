@@ -474,6 +474,26 @@ def test_processor_force_releases_expired_lock() -> None:
     assert "processing_started_at" not in item
 
 
+def test_processor_uses_consistent_owner_identifier() -> None:
+    """Verify that lock acquire and release use the same owner identifier."""
+    import os
+    item = {
+        "id": "doc-1",
+        "bucket": "poc-local-documents",
+        "object_key": "documents/doc-1/example.txt",
+        "status": "created",
+    }
+    table = FakeTable(item)
+    processor = DocumentProcessor(FakeS3Client(), FakeDynamoResource(table), "documents")
+
+    owner = processor._resolve_owner()
+    assert owner
+    assert "uuid" not in owner.lower()
+    assert owner == (os.environ.get("HOSTNAME")
+                     or os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
+                     or "lambda-worker")
+
+
 def test_sqs_worker_does_not_delete_on_locked_result() -> None:
     item = {
         "id": "doc-1",

@@ -114,7 +114,7 @@ class AwsDocumentStore:
         try:
             self._get_s3().delete_object(Bucket=document.bucket, Key=document.object_key)
         except ClientError:
-            logger.warning("s3_delete_failed document_id=%s bucket=%s key=%s",
+            logger.warning("s3_delete_failed_orphan_risk document_id=%s bucket=%s key=%s",
                            document_id, document.bucket, document.object_key, exc_info=True)
         try:
             self._get_table().delete_item(

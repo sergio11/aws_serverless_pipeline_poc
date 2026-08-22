@@ -99,6 +99,15 @@ def test_rejects_empty_content() -> None:
     assert response.status_code == 422
 
 
+def test_rejects_content_exceeding_max_length() -> None:
+    client = create_test_client()
+    huge_content = "x" * 1_048_577
+
+    response = client.post("/documents", json={"name": "test.txt", "content": huge_content})
+
+    assert response.status_code == 422
+
+
 def test_rejects_name_exceeding_max_length() -> None:
     client = create_test_client()
     long_name = "a" * 256

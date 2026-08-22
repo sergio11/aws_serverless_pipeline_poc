@@ -6,7 +6,6 @@ import os
 import signal
 import threading
 import time
-import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -60,6 +59,8 @@ def log_event(level: int, event: str, **fields: Any) -> None:
     logger.log(level, json.dumps(payload, default=str))
 
 
+# NOTE: This enum must stay synchronized with backend/app/domain.py:DocumentStatus
+# If adding new states, update BOTH files.
 class DocumentStatus(StrEnum):
     CREATED = "created"
     PROCESSING = "processing"
@@ -94,6 +95,11 @@ class DocumentProcessor:
     def __init__(self, s3_client: Any, dynamodb_resource: Any, table_name: str) -> None:
         self._s3 = s3_client
         self._table = dynamodb_resource.Table(table_name)
+
+    def _resolve_owner(self) -> str:
+        return os.environ.get("HOSTNAME") \
+            or os.environ.get("AWS_LAMBDA_FUNCTION_NAME") \
+            or "lambda-worker"
 
     def process(self, document_id: str) -> str:
         item = self._get_document(document_id)
@@ -166,9 +172,7 @@ class DocumentProcessor:
                 ConditionExpression="attribute_not_exists(processing_owner) AND #status <> :processed",
                 ExpressionAttributeNames={"#status": "status"},
                 ExpressionAttributeValues={
-                    ":owner": os.environ.get("HOSTNAME")
-                           or os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
-                           or str(uuid.uuid4()),
+                    ":owner": self._resolve_owner(),
                     ":started_at": datetime.now(UTC).isoformat(),
                     ":processed": DocumentStatus.PROCESSED,
                 },
@@ -187,9 +191,7 @@ class DocumentProcessor:
                 UpdateExpression="REMOVE processing_owner, processing_started_at",
                 ConditionExpression="processing_owner = :owner",
                 ExpressionAttributeValues={
-                    ":owner": os.environ.get("HOSTNAME")
-                           or os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
-                           or str(uuid.uuid4()),
+                    ":owner": self._resolve_owner(),
                 },
             )
         except ClientError as exc:
@@ -305,10 +307,15 @@ def build_worker(settings: WorkerSettings) -> SqsWorker:  # pragma: no cover
         "aws_access_key_id": settings.aws_access_key_id,
         "aws_secret_access_key": settings.aws_secret_access_key,
     }
+    processor = DocumentProcessor(
+        s3_client=boto3.client("s3", **client_config),
+        dynamodb_resource=boto3.resource("dynamodb", **client_config),
+        table_name=settings.dynamodb_table,
+    )
     return SqsWorker(
         sqs_client=boto3.client("sqs", **client_config),
         queue_name=settings.sqs_queue_name,
-        processor=create_processor(settings),
+        processor=processor,
     )
 
 

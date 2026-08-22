@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import os
 import sys
 from datetime import UTC, datetime, timedelta
 
@@ -76,8 +77,8 @@ def main() -> None:
     config = {
         "endpoint_url": args.endpoint_url,
         "region_name": args.region,
-        "aws_access_key_id": "test",
-        "aws_secret_access_key": "test",
+        "aws_access_key_id": os.environ.get("AWS_ACCESS_KEY_ID", "test"),
+        "aws_secret_access_key": os.environ.get("AWS_SECRET_ACCESS_KEY", "test"),
     }
 
     dynamodb = boto3.resource("dynamodb", **config)

@@ -1,7 +1,7 @@
 import logging
 import mimetypes
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
 
 from app.logging import log_event
 from app.schemas import (
@@ -55,7 +55,7 @@ def create_document(
 
 @router.get("/documents/{document_id}", response_model=DocumentResponse)
 def get_document(
-    document_id: str,
+    document_id: str = Path(..., pattern=r"^[a-zA-Z0-9_-]+$"),
     document_service: DocumentService = Depends(get_document_service),
 ) -> DocumentResponse:
     try:
@@ -77,7 +77,7 @@ def get_document(
 
 @router.get("/documents/{document_id}/content")
 def get_document_content(
-    document_id: str,
+    document_id: str = Path(..., pattern=r"^[a-zA-Z0-9_-]+$"),
     document_service: DocumentService = Depends(get_document_service),
 ) -> Response:
     try:
@@ -96,7 +96,7 @@ def get_document_content(
 
 @router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_document(
-    document_id: str,
+    document_id: str = Path(..., pattern=r"^[a-zA-Z0-9_-]+$"),
     document_service: DocumentService = Depends(get_document_service),
 ) -> Response:
     try:

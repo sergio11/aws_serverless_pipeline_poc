@@ -177,11 +177,15 @@ class DocumentProcessor:
             raise
 
     def _release_processing_lock(self, document_id: str) -> None:
-        """Libera el lock de procesamiento."""
+        """Libera el lock de procesamiento solo si es el owner actual."""
         try:
             self._table.update_item(
                 Key={"id": document_id},
                 UpdateExpression="REMOVE processing_owner, processing_started_at",
+                ConditionExpression="processing_owner = :owner",
+                ExpressionAttributeValues={
+                    ":owner": os.environ.get("HOSTNAME", "unknown"),
+                },
             )
         except ClientError:
             pass
@@ -244,8 +248,18 @@ class SqsWorker:
             self._delete_message(message)
             return
 
-        result = self._processor.process(payload["document_id"])
+        try:
+            result = self._processor.process(payload["document_id"])
+        except Exception:
+            log_event(logging.ERROR, "message_processing_failed",
+                      document_id=payload["document_id"])
+            return
+
         log_event(logging.INFO, "message_processed", document_id=payload["document_id"], result=result)
+
+        if result == "locked":
+            return
+
         self._delete_message(message)
 
     def _delete_message(self, message: dict[str, Any]) -> None:

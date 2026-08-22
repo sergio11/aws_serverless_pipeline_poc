@@ -418,3 +418,68 @@ def test_processor_force_releases_expired_lock() -> None:
     assert item["status"] == DocumentStatus.PROCESSED
     assert "processing_owner" not in item
     assert "processing_started_at" not in item
+
+
+def test_sqs_worker_does_not_delete_on_locked_result() -> None:
+    item = {
+        "id": "doc-1",
+        "bucket": "poc-local-documents",
+        "object_key": "documents/doc-1/example.txt",
+        "status": "created",
+    }
+    table = FakeTable(item)
+
+    original_update_item = table.update_item
+
+    def conditional_update(**kwargs):
+        cond = kwargs.get("ConditionExpression", "")
+        if "attribute_not_exists(processing_owner)" in cond:
+            raise ClientError(
+                {"Error": {"Code": "ConditionalCheckFailedException", "Message": "locked"}},
+                "UpdateItem",
+            )
+        original_update_item(**kwargs)
+
+    table.update_item = conditional_update
+    processor = DocumentProcessor(FakeS3Client(), FakeDynamoResource(table), "documents")
+    sqs = FakeSqsClient(
+        [
+            {
+                "Body": '{"event_type":"DocumentCreated","document_id":"doc-1"}',
+                "ReceiptHandle": "receipt-locked",
+            }
+        ]
+    )
+    worker = SqsWorker(sqs, "document-events", processor)
+
+    processed_count = worker.run_once()
+
+    assert processed_count == 1
+    assert sqs.deleted == []
+
+
+def test_sqs_worker_does_not_delete_on_processor_exception() -> None:
+    item = {
+        "id": "doc-1",
+        "bucket": "poc-local-documents",
+        "object_key": "documents/doc-1/example.txt",
+        "status": "created",
+    }
+    table = FakeTable(item)
+    s3 = FakeS3Client()
+    s3.fail_with(ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject"))
+    processor = DocumentProcessor(s3, FakeDynamoResource(table), "documents")
+    sqs = FakeSqsClient(
+        [
+            {
+                "Body": '{"event_type":"DocumentCreated","document_id":"doc-1"}',
+                "ReceiptHandle": "receipt-error",
+            }
+        ]
+    )
+    worker = SqsWorker(sqs, "document-events", processor)
+
+    processed_count = worker.run_once()
+
+    assert processed_count == 1
+    assert sqs.deleted == []

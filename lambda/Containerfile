@@ -1,7 +1,6 @@
-FROM python:3.13-slim
+FROM python:3.13-slim AS test
 
 WORKDIR /app
-
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
@@ -13,6 +12,17 @@ COPY tests ./tests
 COPY pyproject.toml .
 RUN pip install --no-cache-dir -e ".[test]"
 
-# Polling mode (fallback when Floci Lambda is unavailable).
-# For Lambda mode, code is deployed via Terraform to Floci directly.
+RUN pytest tests/
+
+FROM python:3.13-slim
+
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY handler.py .
+
 CMD ["python", "handler.py", "--poll"]

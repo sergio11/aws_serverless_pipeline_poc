@@ -230,14 +230,7 @@ namespace :infra do
 
   desc "Package Lambda worker into a deployment zip"
   task :package_lambda do
-    require "fileutils"
-    lambda_dir  = "lambda"
-    output_path = "tmp/lambda/worker.zip"
-
-    FileUtils.mkdir_p("tmp/lambda")
-    FileUtils.rm_f(output_path)
-
-    run_command("bash", "-c", "cd #{lambda_dir} && zip -r ../#{output_path} handler.py requirements.txt -x 'tests/*' '__pycache__/*' '*.pyc'")
+    run_command("bash", "scripts/package-lambda.sh")
   end
 
   desc "Upload Lambda zip to S3 on Floci"

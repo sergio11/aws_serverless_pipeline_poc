@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -7,6 +8,8 @@ from botocore.exceptions import ClientError
 
 from app.domain import Document
 from app.settings import Settings
+
+logger = logging.getLogger(__name__)
 
 
 class AwsDocumentStore:
@@ -102,11 +105,12 @@ class AwsDocumentStore:
         try:
             self._get_s3().delete_object(Bucket=document.bucket, Key=document.object_key)
         except ClientError:
-            pass
+            logger.warning("s3_delete_failed document_id=%s bucket=%s key=%s",
+                           document_id, document.bucket, document.object_key, exc_info=True)
         try:
             self._get_table().delete_item(Key={"id": document_id})
         except ClientError:
-            pass
+            logger.warning("dynamodb_delete_failed document_id=%s", document_id, exc_info=True)
 
     def _get_queue_url(self) -> str:
         if self._queue_url is None:

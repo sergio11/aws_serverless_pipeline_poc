@@ -66,6 +66,7 @@ services:
     build:
       context: ./backend
       dockerfile: Containerfile
+      target: test
     container_name: poc-backend
     ports:
       - "8000:8000"
@@ -91,6 +92,7 @@ services:
     build:
       context: ./lambda
       dockerfile: Containerfile
+      target: test
     container_name: poc-lambda-worker
     env_file:
       - path: .env

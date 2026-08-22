@@ -2,18 +2,27 @@
 set -euo pipefail
 
 LAMBDA_DIR="$(cd "$(dirname "$0")/../lambda" && pwd)"
-OUTPUT_DIR="$(cd "$(dirname "$0")/../terraform" && pwd)"
-OUTPUT_ZIP="${OUTPUT_DIR}/lambda-deployment.zip"
+OUTPUT_DIR="$(cd "$(dirname "$0")/../tmp/lambda" && pwd)"
+OUTPUT_ZIP="${OUTPUT_DIR}/worker.zip"
+VENDOR_DIR="${LAMBDA_DIR}/vendor"
 
 echo "Packaging Lambda function from ${LAMBDA_DIR}..."
 
 cd "${LAMBDA_DIR}"
+mkdir -p "${OUTPUT_DIR}"
 rm -f "${OUTPUT_ZIP}"
+rm -rf "${VENDOR_DIR}"
 
+echo "Installing dependencies..."
+pip install -q -t "${VENDOR_DIR}" -r requirements.txt
+
+echo "Creating deployment package..."
 zip -r "${OUTPUT_ZIP}" \
   handler.py \
-  requirements.txt \
+  vendor/ \
   -x "tests/*" "__pycache__/*" "*.pyc"
+
+rm -rf "${VENDOR_DIR}"
 
 echo "Lambda deployment package created at ${OUTPUT_ZIP}"
 echo "Size: $(du -h "${OUTPUT_ZIP}" | cut -f1)"

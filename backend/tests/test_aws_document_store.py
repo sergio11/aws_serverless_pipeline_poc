@@ -48,7 +48,7 @@ class FakeTable:
         item = self.items.get(Key["id"])
         return {"Item": item} if item else {}
 
-    def delete_item(self, Key: dict[str, str]) -> None:
+    def delete_item(self, Key: dict[str, str], **kwargs) -> None:
         self.items.pop(Key["id"], None)
 
 
@@ -140,7 +140,32 @@ def test_aws_document_store_persists_content_metadata_and_event(monkeypatch) -> 
     store.publish_created(document.id)
 
     assert store.get("doc-1") == document
-    assert store.get_content("doc-1") == "Hello AWS"
+    assert store.get_content("doc-1") == b"Hello AWS"
+
+
+def test_round_trip_save_get_deserialize(monkeypatch) -> None:
+    store = _make_store(monkeypatch)
+    created_at = datetime(2026, 3, 15, 10, 30, 0, tzinfo=UTC)
+    processed_at = datetime(2026, 3, 15, 10, 31, 0, tzinfo=UTC)
+    document = _make_document(
+        status=DocumentStatus.PROCESSED,
+        created_at=created_at,
+        processed_at=processed_at,
+    )
+
+    store.save(document, "Round trip content")
+
+    retrieved = store.get("doc-1")
+    assert retrieved is not None
+    assert retrieved.id == document.id
+    assert retrieved.name == document.name
+    assert retrieved.bucket == document.bucket
+    assert retrieved.object_key == document.object_key
+    assert retrieved.size == document.size
+    assert retrieved.status == DocumentStatus.PROCESSED
+    assert retrieved.created_at == created_at
+    assert retrieved.processed_at == processed_at
+    assert store.get_content("doc-1") == b"Round trip content"
 
 
 def test_bucket_name_property(monkeypatch) -> None:
@@ -237,7 +262,7 @@ def test_delete_tolerates_s3_error(monkeypatch) -> None:
 
 
 class FailingDeleteDynamoTable(FakeTable):
-    def delete_item(self, Key: dict[str, str]) -> None:
+    def delete_item(self, Key: dict[str, str], **kwargs) -> None:
         raise ClientError({"Error": {"Code": "ProvisionedThroughputExceededException"}}, "DeleteItem")
 
 

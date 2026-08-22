@@ -4,6 +4,12 @@ services:
   floci:
     image: ${FLOCI_IMAGE:-floci/floci:1.5.11}
     container_name: poc-floci
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       - "4566:4566"
     environment:
@@ -35,6 +41,12 @@ services:
   floci-ui:
     image: ${FLOCI_UI_IMAGE:-floci/floci-ui:1.5.11}
     container_name: poc-floci-ui
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       - "4500:4500"
     environment:
@@ -53,6 +65,7 @@ services:
       context: ./terraform/container
       dockerfile: Containerfile
     container_name: poc-terraform
+    restart: "no"
     working_dir: /terraform
     volumes:
       - terraform-workdir:/terraform
@@ -68,8 +81,13 @@ services:
     build:
       context: ./backend
       dockerfile: Containerfile
-      target: test
     container_name: poc-backend
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       - "8000:8000"
     env_file:
@@ -102,6 +120,12 @@ services:
       context: ./lambda
       dockerfile: Containerfile
     container_name: poc-lambda-worker
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     env_file:
       - path: .env
         required: false
@@ -132,6 +156,12 @@ services:
       context: ./tests/integration
       dockerfile: Containerfile
     container_name: poc-integration
+    restart: "no"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     env_file:
       - path: .env
         required: false
@@ -155,6 +185,12 @@ services:
       context: ./tests/e2e
       dockerfile: Containerfile
     container_name: poc-e2e
+    restart: "no"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     env_file:
       - path: .env
         required: false

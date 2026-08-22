@@ -27,7 +27,7 @@ def scan_stale_documents(table, max_age_minutes: int) -> list[dict]:
     last_key = None
 
     while True:
-        kwargs: dict = {"FilterExpression": "#s IN (:created, :processing)"}
+        kwargs: dict = {"FilterExpression": "#s = :created OR #s = :processing"}
         kwargs["ExpressionAttributeNames"] = {"#s": "status"}
         kwargs["ExpressionAttributeValues"] = {
             ":created": "created",

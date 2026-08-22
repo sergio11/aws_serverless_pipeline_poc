@@ -99,6 +99,23 @@ def test_rejects_empty_content() -> None:
     assert response.status_code == 422
 
 
+def test_rejects_name_exceeding_max_length() -> None:
+    client = create_test_client()
+    long_name = "a" * 256
+
+    response = client.post("/documents", json={"name": long_name, "content": "Hello"})
+
+    assert response.status_code == 422
+
+
+def test_rejects_empty_name() -> None:
+    client = create_test_client()
+
+    response = client.post("/documents", json={"name": "", "content": "Hello"})
+
+    assert response.status_code == 422
+
+
 class FailingDocumentStore:
     bucket_name = "failing-documents"
 

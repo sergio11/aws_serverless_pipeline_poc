@@ -99,6 +99,7 @@ class DocumentService:
             self._store.save(document, content)
             self._store.publish_created(document.id)
         except Exception as exc:
+            log_event(logging.ERROR, "create_document_failed", document_id=document_id, reason=str(exc))
             try:
                 self._store.delete(document.id)
             except Exception:

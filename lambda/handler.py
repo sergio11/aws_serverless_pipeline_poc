@@ -192,8 +192,9 @@ class DocumentProcessor:
                            or str(uuid.uuid4()),
                 },
             )
-        except ClientError:
-            pass
+        except ClientError as exc:
+            log_event(logging.WARNING, "lock_release_failed",
+                      document_id=document_id, error=str(exc))
 
     def _get_document(self, document_id: str) -> dict[str, Any] | None:
         response = self._table.get_item(Key={"id": document_id})

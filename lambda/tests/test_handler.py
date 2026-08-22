@@ -301,6 +301,60 @@ def test_lambda_handler_missing_body_key():
     assert result["results"][0]["error"] == "invalid_record"
 
 
+def test_lambda_handler_batch_with_partial_failure():
+    items = {
+        "doc-1": {
+            "id": "doc-1",
+            "bucket": "poc-local-documents",
+            "object_key": "documents/doc-1/example.txt",
+            "status": "created",
+        },
+    }
+
+    class MultiItemTable:
+        def __init__(self, initial: dict[str, dict]) -> None:
+            self.items = dict(initial)
+            self.updates: list = []
+
+        def get_item(self, Key):
+            item = self.items.get(Key["id"])
+            return {"Item": item} if item else {}
+
+        def update_item(self, **kwargs):
+            self.updates.append(kwargs)
+            kid = kwargs["Key"]["id"]
+            values = kwargs.get("ExpressionAttributeValues", {})
+            if kid in self.items:
+                if ":status" in values:
+                    self.items[kid]["status"] = values[":status"]
+                if ":size" in values:
+                    self.items[kid]["size"] = values[":size"]
+                if ":processed_at" in values:
+                    self.items[kid]["processed_at"] = values[":processed_at"]
+
+    table = MultiItemTable(items)
+    s3 = FakeS3Client()
+    processor = DocumentProcessor(s3, FakeDynamoResource(table), "documents")
+
+    event = {
+        "Records": [
+            {"body": json.dumps({"event_type": "DocumentCreated", "document_id": "doc-1"})},
+            {"body": "not-valid-json"},
+            {"body": json.dumps({"event_type": "DocumentCreated", "document_id": "doc-missing"})},
+        ]
+    }
+
+    with patch("handler.create_processor", return_value=processor):
+        from handler import lambda_handler
+        result = lambda_handler(event, None)
+
+    assert result["processed"] == 2
+    assert len(result["results"]) == 3
+    assert result["results"][0]["result"] == "processed"
+    assert result["results"][1]["error"] == "invalid_record"
+    assert result["results"][2]["result"] == "missing"
+
+
 def test_processor_returns_locked_when_another_worker_holds_lock() -> None:
     item = {
         "id": "doc-1",

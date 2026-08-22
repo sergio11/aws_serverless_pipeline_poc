@@ -35,6 +35,24 @@ def test_create_document_cleans_up_on_publish_failure() -> None:
         pass
 
 
+def test_create_document_cleanup_failure_still_raises() -> None:
+    class FailingPublishAndCleanupStore(InMemoryDocumentStore):
+        def publish_created(self, document_id: str) -> None:
+            raise RuntimeError("queue unavailable")
+
+        def delete(self, document_id: str) -> None:
+            raise RuntimeError("cleanup also failed")
+
+    store = FailingPublishAndCleanupStore(bucket_name="test")
+    service = DocumentService(store)
+
+    try:
+        service.create_document("test.txt", "Hello")
+        assert False, "Should have raised"
+    except DocumentInfrastructureError:
+        pass
+
+
 def test_get_document_raises_infrastructure_error() -> None:
     class ErrorStore:
         bucket_name = "test"

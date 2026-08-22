@@ -30,7 +30,7 @@ class AwsDocumentStore:
         self._sqs_client = None
         self._table_ref = None
         self._queue_url: str | None = None
-        self._init_lock = threading.Lock()
+        self._init_lock = threading.RLock()
 
     def _get_s3(self):
         if self._s3_client is None:

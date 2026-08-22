@@ -20,7 +20,7 @@ def test_processor_marks_document_processed() -> None:
         "id": "doc-1",
         "bucket": "poc-local-documents",
         "object_key": "documents/doc-1/example.txt",
-        "status": "CREATED",
+        "status": "created",
     }
     table = FakeTable(item)
     processor = DocumentProcessor(FakeS3Client(), FakeDynamoResource(table), "documents")
@@ -38,7 +38,7 @@ def test_processor_skips_already_processed_document() -> None:
         "id": "doc-1",
         "bucket": "poc-local-documents",
         "object_key": "documents/doc-1/example.txt",
-        "status": "PROCESSED",
+        "status": "processed",
     }
     table = FakeTable(item)
     processor = DocumentProcessor(FakeS3Client(), FakeDynamoResource(table), "documents")
@@ -64,7 +64,7 @@ def test_processor_attempts_reprocess_on_failed_document() -> None:
         "id": "doc-1",
         "bucket": "poc-local-documents",
         "object_key": "documents/doc-1/example.txt",
-        "status": "FAILED",
+        "status": "failed",
     }
     table = FakeTable(item)
     processor = DocumentProcessor(FakeS3Client(), FakeDynamoResource(table), "documents")
@@ -80,7 +80,7 @@ def test_processor_attempts_reprocess_on_processing_document() -> None:
         "id": "doc-1",
         "bucket": "poc-local-documents",
         "object_key": "documents/doc-1/example.txt",
-        "status": "PROCESSING",
+        "status": "processing",
     }
     table = FakeTable(item)
     processor = DocumentProcessor(FakeS3Client(), FakeDynamoResource(table), "documents")
@@ -96,7 +96,7 @@ def test_processor_marks_failed_on_s3_error() -> None:
         "id": "doc-1",
         "bucket": "poc-local-documents",
         "object_key": "documents/doc-1/example.txt",
-        "status": "CREATED",
+        "status": "created",
     }
     table = FakeTable(item)
     s3 = FakeS3Client()
@@ -118,7 +118,7 @@ def test_processor_marks_failed_on_dynamodb_update_error() -> None:
         "id": "doc-1",
         "bucket": "poc-local-documents",
         "object_key": "documents/doc-1/example.txt",
-        "status": "CREATED",
+        "status": "created",
     }
     table = FakeTable(item)
     table.fail_update_with(ClientError({"Error": {"Code": "ProvisionedThroughputExceededException"}}, "UpdateItem"))
@@ -133,7 +133,7 @@ def test_sqs_worker_processes_and_deletes_created_event() -> None:
         "id": "doc-1",
         "bucket": "poc-local-documents",
         "object_key": "documents/doc-1/example.txt",
-        "status": "CREATED",
+        "status": "created",
     }
     processor = DocumentProcessor(FakeS3Client(), FakeDynamoResource(FakeTable(item)), "documents")
     sqs = FakeSqsClient(
@@ -216,7 +216,7 @@ def test_lambda_handler_processes_document_created():
         "id": "doc-1",
         "bucket": "poc-local-documents",
         "object_key": "documents/doc-1/example.txt",
-        "status": "CREATED",
+        "status": "created",
     }
     table = FakeTable(item)
     processor = DocumentProcessor(FakeS3Client(), FakeDynamoResource(table), "documents")
@@ -234,7 +234,7 @@ def test_lambda_handler_processes_document_created():
     assert result["processed"] == 1
     assert result["results"][0]["document_id"] == "doc-1"
     assert result["results"][0]["result"] == "processed"
-    assert item["status"] == "PROCESSED"
+    assert item["status"] == "processed"
 
 
 def test_lambda_handler_handles_invalid_json():
@@ -257,7 +257,7 @@ def test_lambda_handler_skips_unsupported_events():
         "id": "doc-1",
         "bucket": "poc-local-documents",
         "object_key": "documents/doc-1/example.txt",
-        "status": "CREATED",
+        "status": "created",
     }
     processor = DocumentProcessor(FakeS3Client(), FakeDynamoResource(FakeTable(item)), "documents")
 
@@ -306,7 +306,7 @@ def test_processor_returns_locked_when_another_worker_holds_lock() -> None:
         "id": "doc-1",
         "bucket": "poc-local-documents",
         "object_key": "documents/doc-1/example.txt",
-        "status": "CREATED",
+        "status": "created",
     }
     table = FakeTable(item)
 
@@ -338,7 +338,7 @@ def test_processor_logs_when_failed_status_update_also_fails() -> None:
         "id": "doc-1",
         "bucket": "poc-local-documents",
         "object_key": "documents/doc-1/example.txt",
-        "status": "CREATED",
+        "status": "created",
     }
     table = FakeTable(item)
     s3 = FakeS3Client()
@@ -376,7 +376,7 @@ def test_processor_tolerates_release_lock_error() -> None:
         "id": "doc-1",
         "bucket": "poc-local-documents",
         "object_key": "documents/doc-1/example.txt",
-        "status": "CREATED",
+        "status": "created",
     }
     table = FakeTable(item)
 
@@ -405,7 +405,7 @@ def test_processor_force_releases_expired_lock() -> None:
         "id": "doc-1",
         "bucket": "poc-local-documents",
         "object_key": "documents/doc-1/example.txt",
-        "status": "CREATED",
+        "status": "created",
         "processing_owner": "stale-worker",
         "processing_started_at": expired_at,
     }

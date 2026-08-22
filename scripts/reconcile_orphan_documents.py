@@ -30,8 +30,8 @@ def scan_stale_documents(table, max_age_minutes: int) -> list[dict]:
         kwargs: dict = {"FilterExpression": "#s IN (:created, :processing)"}
         kwargs["ExpressionAttributeNames"] = {"#s": "status"}
         kwargs["ExpressionAttributeValues"] = {
-            ":created": "CREATED",
-            ":processing": "PROCESSING",
+            ":created": "created",
+            ":processing": "processing",
         }
         if last_key:
             kwargs["ExclusiveStartKey"] = last_key
@@ -65,7 +65,7 @@ def reset_processing_lock(table, document_id: str, dry_run: bool) -> None:
         Key={"id": document_id},
         UpdateExpression="SET #s = :created REMOVE processing_owner, processing_started_at",
         ExpressionAttributeNames={"#s": "status"},
-        ExpressionAttributeValues={":created": "CREATED"},
+        ExpressionAttributeValues={":created": "created"},
     )
     print(f"  Reset lock for {document_id}")
 
@@ -107,7 +107,7 @@ def main() -> None:
         status = item["status"]
         print(f"\nDocument {doc_id} (status={status}):")
 
-        if status == "PROCESSING":
+        if status == "processing":
             reset_processing_lock(table, doc_id, args.dry_run)
 
         send_requeue_message(sqs, queue_url, doc_id, args.dry_run)

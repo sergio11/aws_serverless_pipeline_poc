@@ -71,13 +71,13 @@ class TestDynamoDBIntegration:
             "bucket": S3_BUCKET,
             "object_key": f"docs/{item_id}/test.txt",
             "size": 9,
-            "status": "CREATED",
+            "status": "created",
             "created_at": "2026-01-01T00:00:00+00:00",
         })
 
         response = table.get_item(Key={"id": item_id})
         assert response["Item"]["id"] == item_id
-        assert response["Item"]["status"] == "CREATED"
+        assert response["Item"]["status"] == "created"
         assert response["Item"]["name"] == "test.txt"
 
         table.delete_item(Key={"id": item_id})
@@ -100,7 +100,7 @@ class TestDynamoDBIntegration:
             "bucket": S3_BUCKET,
             "object_key": f"docs/{item_id}/test.txt",
             "size": 9,
-            "status": "CREATED",
+            "status": "created",
             "created_at": "2026-01-01T00:00:00+00:00",
         })
 
@@ -109,7 +109,7 @@ class TestDynamoDBIntegration:
             UpdateExpression="SET #status = :status, #size = :size, processed_at = :processed_at",
             ExpressionAttributeNames={"#status": "status", "#size": "size"},
             ExpressionAttributeValues={
-                ":status": "PROCESSED",
+                ":status": "processed",
                 ":size": 18,
                 ":processed_at": "2026-01-01T00:01:00+00:00",
             },
@@ -117,7 +117,7 @@ class TestDynamoDBIntegration:
 
         response = table.get_item(Key={"id": item_id})
         item = response["Item"]
-        assert item["status"] == "PROCESSED"
+        assert item["status"] == "processed"
         assert item["size"] == 18
         assert "processed_at" in item
 

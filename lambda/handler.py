@@ -60,10 +60,10 @@ def log_event(level: int, event: str, **fields: Any) -> None:
 
 
 class DocumentStatus(StrEnum):
-    CREATED = "CREATED"
-    PROCESSING = "PROCESSING"
-    PROCESSED = "PROCESSED"
-    FAILED = "FAILED"
+    CREATED = "created"
+    PROCESSING = "processing"
+    PROCESSED = "processed"
+    FAILED = "failed"
 
 
 @dataclass(frozen=True)

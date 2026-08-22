@@ -73,7 +73,7 @@ def test_document_workflow_reaches_processed_status() -> None:
     db_item = db_response["Item"]
     assert db_item["id"] == document_id
     assert db_item["name"] == unique_name
-    assert db_item["status"] == "PROCESSED"
+    assert db_item["status"] == "processed"
     assert db_item["bucket"] == S3_BUCKET
     assert db_item["object_key"] == object_key
     assert db_item["size"] == 9

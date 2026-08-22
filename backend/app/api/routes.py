@@ -43,7 +43,7 @@ def create_document(
     return CreateDocumentResponse(
         id=document.id,
         name=document.name,
-        status=document.status.lower(),
+        status=document.status,
     )
 
 
@@ -65,7 +65,7 @@ def get_document(
         id=document.id,
         name=document.name,
         size=document.size,
-        status=document.status.lower(),
+        status=document.status,
     )
 
 

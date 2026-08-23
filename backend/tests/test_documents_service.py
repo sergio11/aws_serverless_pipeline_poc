@@ -53,6 +53,24 @@ def test_create_document_cleanup_failure_still_raises() -> None:
         pass
 
 
+def test_create_document_save_failure_cleanup_also_fails() -> None:
+    class FailingSaveAndCleanupStore(InMemoryDocumentStore):
+        def save(self, document: Document, content: str) -> None:
+            raise RuntimeError("save failed")
+
+        def delete(self, document_id: str) -> None:
+            raise RuntimeError("cleanup also failed")
+
+    store = FailingSaveAndCleanupStore(bucket_name="test")
+    service = DocumentService(store)
+
+    try:
+        service.create_document("test.txt", "Hello")
+        assert False, "Should have raised"
+    except DocumentInfrastructureError:
+        pass
+
+
 def test_get_document_raises_infrastructure_error() -> None:
     class ErrorStore:
         bucket_name = "test"

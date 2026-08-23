@@ -310,6 +310,11 @@ class FailingDeleteDynamoTable(FakeTable):
         raise ClientError({"Error": {"Code": "ProvisionedThroughputExceededException"}}, "DeleteItem")
 
 
+class ConditionalCheckFailedDynamoTable(FakeTable):
+    def delete_item(self, Key: dict[str, str], **kwargs) -> None:
+        raise ClientError({"Error": {"Code": "ConditionalCheckFailedException"}}, "DeleteItem")
+
+
 def test_delete_propagates_dynamodb_error(monkeypatch) -> None:
     table = FailingDeleteDynamoTable()
     store = _make_store(monkeypatch, table=table)
@@ -320,6 +325,42 @@ def test_delete_propagates_dynamodb_error(monkeypatch) -> None:
         store.delete("doc-1")
 
     assert "doc-1" in table.items
+
+
+def test_delete_logs_inconsistency_when_s3_deleted_but_dynamodb_not_found(monkeypatch) -> None:
+    table = ConditionalCheckFailedDynamoTable()
+    store = _make_store(monkeypatch, table=table)
+    document = _make_document()
+    store.save(document, "Hello AWS")
+
+    store.delete("doc-1")
+
+
+def test_delete_error_when_both_s3_and_dynamodb_fail(monkeypatch) -> None:
+    s3 = FailingDeleteS3Client()
+    table = FailingDeleteDynamoTable()
+    store = _make_store(monkeypatch, s3=s3, table=table)
+    document = _make_document()
+    store.save(document, "Hello AWS")
+
+    with pytest.raises(ClientError):
+        store.delete("doc-1")
+
+
+def test_deserialize_raises_on_invalid_status(monkeypatch) -> None:
+    store = _make_store(monkeypatch)
+    store._get_table().items["doc-1"] = {
+        "id": "doc-1",
+        "name": "test.txt",
+        "bucket": "test",
+        "object_key": "docs/doc-1/test.txt",
+        "size": 5,
+        "status": "invalid_status_value",
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+
+    with pytest.raises(ValueError, match="Invalid DocumentStatus value"):
+        store.get("doc-1")
 
 
 def test_health_check_all_ok(monkeypatch) -> None:

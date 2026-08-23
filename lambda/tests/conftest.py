@@ -30,6 +30,14 @@ def _check_condition(item: dict | None, condition: str, values: dict) -> None:
                 "UpdateItem",
             )
 
+    if "attribute_exists(processing_owner)" in condition:
+        if "processing_owner" not in item:
+            raise ClientError(
+                {"Error": {"Code": "ConditionalCheckFailedException",
+                           "Message": "The conditional check failed"}},
+                "UpdateItem",
+            )
+
     if "processing_owner = :owner" in condition:
         expected_owner = values.get(":owner")
         if item.get("processing_owner") != expected_owner:

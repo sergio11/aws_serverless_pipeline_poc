@@ -50,7 +50,7 @@ services:
       start_period: 5s
 
   floci-ui:
-    image: ${FLOCI_UI_IMAGE:-floci/floci-ui:1.5.11}
+    image: ${FLOCI_UI_IMAGE:-floci/floci-ui:latest}
     container_name: poc-floci-ui
     restart: unless-stopped
     deploy:
@@ -104,6 +104,7 @@ services:
       dockerfile: Containerfile
       target: test
     container_name: poc-backend
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true

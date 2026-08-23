@@ -1,8 +1,17 @@
 module "storage" {
   source = "./modules/storage"
 
-  bucket_name = local.bucket_name
-  tags        = local.common_tags
+  bucket_name    = local.bucket_name
+  force_destroy  = true
+  tags           = local.common_tags
+}
+
+resource "aws_s3_object" "lambda_zip" {
+  bucket = module.storage.bucket_name
+  key    = local.lambda_s3_key
+  source = "/workspace/tmp/lambda/worker.zip"
+
+  depends_on = [module.storage]
 }
 
 module "database" {
@@ -34,6 +43,7 @@ module "iam" {
 module "monitoring" {
   source = "./modules/monitoring"
 
+  enable_monitoring    = var.enable_monitoring
   alarm_email          = var.alarm_email
   sqs_queue_name       = local.queue_name
   sqs_dlq_name         = local.dlq_name
@@ -56,14 +66,8 @@ module "compute" {
   sqs_queue_arn   = module.messaging.queue_arn
   sqs_batch_size  = 10
 
-  # DEPLOY ORDER: The Lambda function references an S3 object that must exist.
-  # Execute in this order:
-  #   1. terraform apply (creates S3 bucket + other infra)
-  #   2. scripts/package-lambda.sh (creates worker.zip)
-  #   3. aws s3 cp tmp/lambda/worker.zip s3://<bucket>/lambda/document-processor.zip
-  #   4. terraform apply again (now S3 object exists, Lambda creation succeeds)
-  #
-  # Alternatively, use: rake infra:deploy (automates the full sequence)
+  depends_on = [aws_s3_object.lambda_zip]
+
   environment_variables = {
     AWS_ENDPOINT_URL   = var.lambda_aws_endpoint_url
     AWS_DEFAULT_REGION = var.aws_region

@@ -8,3 +8,9 @@ variable "tags" {
   description = "Tags applied to supported resources."
   default     = {}
 }
+
+variable "force_destroy" {
+  type        = bool
+  description = "Destroy bucket even if not empty (for local POC)."
+  default     = false
+}

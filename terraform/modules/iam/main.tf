@@ -54,6 +54,17 @@ data "aws_iam_policy_document" "lambda_worker" {
       var.sqs_queue_arn,
     ]
   }
+
+  statement {
+    sid = "SQSDLQAccess"
+    actions = [
+      "sqs:ReceiveMessage",
+      "sqs:GetQueueUrl",
+    ]
+    resources = [
+      var.sqs_dlq_arn,
+    ]
+  }
 }
 
 resource "aws_iam_policy" "lambda_worker" {

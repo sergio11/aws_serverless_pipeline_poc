@@ -211,8 +211,11 @@ class DocumentProcessor:
             self._table.update_item(
                 Key={"id": document_id},
                 UpdateExpression="REMOVE processing_owner, processing_started_at",
+                ConditionExpression="attribute_exists(processing_owner)",
             )
         except ClientError as exc:
+            if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return
             log_event(logging.WARNING, "force_lock_release_failed",
                       document_id=document_id, error=str(exc))
 

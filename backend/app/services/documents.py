@@ -95,13 +95,13 @@ class DocumentService:
             status=DocumentStatus.CREATED,
             created_at=datetime.now(UTC),
         )
-        sqs_published = False
+        saved = False
         try:
             self._store.save(document, content)
+            saved = True
             self._store.publish_created(document.id)
-            sqs_published = True
         except Exception as exc:
-            if sqs_published:
+            if saved:
                 log_event(logging.ERROR, "create_document_failed",
                           document_id=document_id,
                           reason=str(exc),

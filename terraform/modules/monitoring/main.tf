@@ -1,4 +1,6 @@
 resource "aws_cloudwatch_dashboard" "main" {
+  count = var.enable_monitoring ? 1 : 0
+
   dashboard_name = "${var.lambda_function_name}-dashboard"
 
   dashboard_body = jsonencode({
@@ -73,18 +75,20 @@ resource "aws_cloudwatch_dashboard" "main" {
 }
 
 resource "aws_sns_topic" "alarm_notifications" {
-  name = "${var.lambda_function_name}-alarm-notifications"
-  tags = var.tags
+  count = var.enable_monitoring ? 1 : 0
+  name  = "${var.lambda_function_name}-alarm-notifications"
+  tags  = var.tags
 }
 
 resource "aws_sns_topic_subscription" "alarm_email" {
-  count     = var.alarm_email != "" ? 1 : 0
-  topic_arn = aws_sns_topic.alarm_notifications.arn
+  count     = var.enable_monitoring && var.alarm_email != "" ? 1 : 0
+  topic_arn = aws_sns_topic.alarm_notifications[0].arn
   protocol  = "email"
   endpoint  = var.alarm_email
 }
 
 resource "aws_cloudwatch_metric_alarm" "dlq_not_empty" {
+  count               = var.enable_monitoring ? 1 : 0
   alarm_name          = "${var.lambda_function_name}-dlq-not-empty"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
@@ -94,8 +98,8 @@ resource "aws_cloudwatch_metric_alarm" "dlq_not_empty" {
   statistic           = "Sum"
   threshold           = 0
   alarm_description   = "Alarm when DLQ has messages"
-  alarm_actions       = [aws_sns_topic.alarm_notifications.arn]
-  ok_actions          = [aws_sns_topic.alarm_notifications.arn]
+  alarm_actions       = [aws_sns_topic.alarm_notifications[0].arn]
+  ok_actions          = [aws_sns_topic.alarm_notifications[0].arn]
   tags                = var.tags
 
   dimensions = {
@@ -104,6 +108,7 @@ resource "aws_cloudwatch_metric_alarm" "dlq_not_empty" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
+  count               = var.enable_monitoring ? 1 : 0
   alarm_name          = "${var.lambda_function_name}-errors"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
@@ -113,8 +118,8 @@ resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
   statistic           = "Sum"
   threshold           = 0
   alarm_description   = "Alarm when Lambda has errors"
-  alarm_actions       = [aws_sns_topic.alarm_notifications.arn]
-  ok_actions          = [aws_sns_topic.alarm_notifications.arn]
+  alarm_actions       = [aws_sns_topic.alarm_notifications[0].arn]
+  ok_actions          = [aws_sns_topic.alarm_notifications[0].arn]
   tags                = var.tags
 
   dimensions = {
@@ -123,6 +128,7 @@ resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "lambda_throttles" {
+  count               = var.enable_monitoring ? 1 : 0
   alarm_name          = "${var.lambda_function_name}-throttles"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
@@ -132,8 +138,8 @@ resource "aws_cloudwatch_metric_alarm" "lambda_throttles" {
   statistic           = "Sum"
   threshold           = 0
   alarm_description   = "Alarm when Lambda is throttled"
-  alarm_actions       = [aws_sns_topic.alarm_notifications.arn]
-  ok_actions          = [aws_sns_topic.alarm_notifications.arn]
+  alarm_actions       = [aws_sns_topic.alarm_notifications[0].arn]
+  ok_actions          = [aws_sns_topic.alarm_notifications[0].arn]
   tags                = var.tags
 
   dimensions = {
@@ -142,6 +148,7 @@ resource "aws_cloudwatch_metric_alarm" "lambda_throttles" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "sqs_depth_high" {
+  count               = var.enable_monitoring ? 1 : 0
   alarm_name          = "${var.lambda_function_name}-sqs-depth-high"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
@@ -151,8 +158,8 @@ resource "aws_cloudwatch_metric_alarm" "sqs_depth_high" {
   statistic           = "Average"
   threshold           = 100
   alarm_description   = "Alarm when SQS queue depth exceeds 100"
-  alarm_actions       = [aws_sns_topic.alarm_notifications.arn]
-  ok_actions          = [aws_sns_topic.alarm_notifications.arn]
+  alarm_actions       = [aws_sns_topic.alarm_notifications[0].arn]
+  ok_actions          = [aws_sns_topic.alarm_notifications[0].arn]
   tags                = var.tags
 
   dimensions = {

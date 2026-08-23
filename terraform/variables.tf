@@ -52,3 +52,15 @@ variable "alarm_email" {
   description = "Email for CloudWatch alarm notifications."
   default     = ""
 }
+
+variable "enable_monitoring" {
+  type        = bool
+  description = "Enable CloudWatch monitoring and SNS notifications. Disable for local POC."
+  default     = false
+}
+
+variable "lambda_zip_path" {
+  type        = string
+  description = "Local path to the Lambda deployment zip file."
+  default     = "../tmp/lambda/worker.zip"
+}

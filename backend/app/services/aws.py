@@ -80,7 +80,8 @@ class AwsDocumentStore:
             try:
                 self._get_s3().delete_object(Bucket=document.bucket, Key=document.object_key)
             except ClientError:
-                logger.warning("s3_rollback_failed document_id=%s", document.id, exc_info=True)
+                logger.error("s3_rollback_failed_orphan document_id=%s bucket=%s key=%s",
+                             document.id, document.bucket, document.object_key, exc_info=True)
             raise
 
     def get(self, document_id: str) -> Document | None:
@@ -132,6 +133,9 @@ class AwsDocumentStore:
             )
         except ClientError as exc:
             if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                if s3_deleted:
+                    logger.warning("delete_inconsistency document_id=%s s3_deleted=True dynamodb_not_found=True",
+                                   document_id)
                 return
             if not s3_deleted:
                 logger.error("combined_delete_failure document_id=%s s3_deleted=False dynamodb_failed=True", document_id)
@@ -160,7 +164,8 @@ class AwsDocumentStore:
         except Exception:
             result["dynamodb"] = "error"
         try:
-            self._queue_url = None
+            with self._init_lock:
+                self._queue_url = None
             self._get_queue_url()
             result["sqs"] = "ok"
         except Exception:

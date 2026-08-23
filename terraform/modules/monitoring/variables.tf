@@ -1,3 +1,9 @@
+variable "enable_monitoring" {
+  type        = bool
+  description = "Enable CloudWatch monitoring and SNS notifications. Disable for local POC."
+  default     = false
+}
+
 variable "alarm_email" {
   type        = string
   description = "Email for CloudWatch alarm notifications."

@@ -154,6 +154,7 @@ services:
       dockerfile: Containerfile
       target: test
     container_name: poc-lambda-worker
+    profiles: ["worker"]
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true

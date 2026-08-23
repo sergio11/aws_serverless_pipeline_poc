@@ -340,22 +340,28 @@ end
 namespace :worker do
   desc "Build the Lambda-style worker container"
   task :build do
-    run_command("podman-compose", "-f", COMPOSE_FILE, "build", WORKER_SERVICE)
+    run_command("podman-compose", "-f", COMPOSE_FILE, "--profile", "worker", "build", WORKER_SERVICE)
   end
 
   desc "Run worker tests"
   task test: :build do
-    run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "--no-deps", "-T", WORKER_SERVICE, "pytest", "tests", "--cov=handler", "--cov-report=term-missing", "--cov-fail-under=98")
+    run_command("podman-compose", "-f", COMPOSE_FILE, "--profile", "worker", "run", "--rm", "--no-deps", "-T", WORKER_SERVICE, "pytest", "tests", "--cov=handler", "--cov-report=term-missing", "--cov-fail-under=98")
   end
 
   desc "Process one SQS receive cycle and exit (fallback when Lambda unavailable)"
   task run_once: ["floci:start", :build] do
-    run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "-T", WORKER_SERVICE, "python", "handler.py", "--once")
+    run_command("podman-compose", "-f", COMPOSE_FILE, "--profile", "worker", "run", "--rm", "-T", WORKER_SERVICE, "python", "handler.py", "--once")
   end
 
   desc "Start the polling worker (fallback when Lambda unavailable)"
   task start: ["floci:start", :build] do
-    run_command("podman-compose", "-f", COMPOSE_FILE, "up", "-d", WORKER_SERVICE)
+    if ENV.fetch("LAMBDA_ENABLED", "true") == "true"
+      puts "WARNING: LAMBDA_ENABLED=true. The Terraform-managed Lambda should be processing messages."
+      puts "The polling worker is a FALLBACK. Only use it when Lambda is unavailable."
+      puts "Set LAMBDA_ENABLED=false to start the worker."
+      exit 1
+    end
+    run_command("podman-compose", "-f", COMPOSE_FILE, "--profile", "worker", "up", "-d", WORKER_SERVICE)
   end
 
   desc "Show worker container status"

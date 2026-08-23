@@ -95,15 +95,24 @@ class DocumentService:
             status=DocumentStatus.CREATED,
             created_at=datetime.now(UTC),
         )
+        sqs_published = False
         try:
             self._store.save(document, content)
             self._store.publish_created(document.id)
+            sqs_published = True
         except Exception as exc:
-            log_event(logging.ERROR, "create_document_failed", document_id=document_id, reason=str(exc))
-            try:
-                self._store.delete(document.id)
-            except Exception:
-                log_event(logging.WARNING, "s3_cleanup_failed", document_id=document_id)
+            if sqs_published:
+                log_event(logging.ERROR, "create_document_failed",
+                          document_id=document_id,
+                          reason=str(exc),
+                          note="Document saved but SQS publish failed; no cleanup performed")
+            else:
+                log_event(logging.ERROR, "create_document_failed",
+                          document_id=document_id, reason=str(exc))
+                try:
+                    self._store.delete(document.id)
+                except Exception:
+                    log_event(logging.WARNING, "s3_cleanup_failed", document_id=document_id)
             raise DocumentInfrastructureError("document persistence failed") from exc
         return document
 

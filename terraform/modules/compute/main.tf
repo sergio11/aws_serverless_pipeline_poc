@@ -1,10 +1,11 @@
 resource "aws_lambda_function" "document_processor" {
-  function_name = var.function_name
-  role          = var.lambda_role_arn
-  handler       = var.handler
-  runtime       = var.runtime
-  timeout       = var.timeout
-  memory_size   = var.memory_size
+  function_name                = var.function_name
+  role                         = var.lambda_role_arn
+  handler                      = var.handler
+  runtime                      = var.runtime
+  timeout                      = var.timeout
+  memory_size                  = var.memory_size
+  reserved_concurrent_executions = 5
 
   s3_bucket = var.s3_bucket
   s3_key    = var.s3_key

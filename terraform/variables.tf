@@ -46,3 +46,9 @@ variable "lambda_aws_endpoint_url" {
   description = "AWS endpoint URL used inside Lambda function containers."
   default     = "http://floci:4566"
 }
+
+variable "alarm_email" {
+  type        = string
+  description = "Email for CloudWatch alarm notifications."
+  default     = ""
+}

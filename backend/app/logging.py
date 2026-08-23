@@ -3,6 +3,8 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+# SYNC: This log_event function is duplicated in lambda/handler.py
+# Changes must be applied to both files to maintain log format consistency.
 
 logger = logging.getLogger("backend")
 logging.basicConfig(level=logging.INFO, format="%(message)s")

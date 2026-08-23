@@ -107,3 +107,39 @@ def test_lambda_function_exists() -> None:
     )
     assert result.returncode == 0
     assert "poc-local-document-processor" in result.stdout
+
+
+def test_document_delete_workflow() -> None:
+    """Verify document can be deleted via DELETE /documents/{id}.
+
+    Creates a document, confirms it exists via GET, deletes it, then confirms
+    the deletion by verifying GET returns 404 and a second DELETE also returns 404.
+    """
+    unique_name = f"e2e-delete-{ULID()}.txt"
+    content = "Delete me"
+
+    with httpx.Client(timeout=10) as client:
+        response = client.post(
+            f"{BACKEND_ENDPOINT}/documents",
+            json={"name": unique_name, "content": content},
+        )
+        assert response.status_code == 201
+        created = response.json()
+
+    document_id = created["id"]
+
+    with httpx.Client(timeout=10) as client:
+        get_response = client.get(f"{BACKEND_ENDPOINT}/documents/{document_id}")
+        assert get_response.status_code == 200
+
+    with httpx.Client(timeout=10) as client:
+        delete_response = client.delete(f"{BACKEND_ENDPOINT}/documents/{document_id}")
+        assert delete_response.status_code == 204
+
+    with httpx.Client(timeout=10) as client:
+        get_after_delete = client.get(f"{BACKEND_ENDPOINT}/documents/{document_id}")
+        assert get_after_delete.status_code == 404
+
+    with httpx.Client(timeout=10) as client:
+        delete_again = client.delete(f"{BACKEND_ENDPOINT}/documents/{document_id}")
+        assert delete_again.status_code == 404

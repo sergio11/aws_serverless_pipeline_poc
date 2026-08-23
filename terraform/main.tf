@@ -31,6 +31,17 @@ module "iam" {
   tags                = local.common_tags
 }
 
+module "monitoring" {
+  source = "./modules/monitoring"
+
+  alarm_email          = var.alarm_email
+  sqs_queue_name       = local.queue_name
+  sqs_dlq_name         = local.dlq_name
+  lambda_function_name = local.lambda_function_name
+  region               = var.aws_region
+  tags                 = local.common_tags
+}
+
 module "compute" {
   source = "./modules/compute"
 

@@ -38,7 +38,6 @@ data "aws_iam_policy_document" "lambda_worker" {
       "dynamodb:GetItem",
       "dynamodb:PutItem",
       "dynamodb:UpdateItem",
-      "dynamodb:DeleteItem",
       "dynamodb:Query",
     ]
     resources = [var.dynamodb_table_arn]
@@ -49,12 +48,10 @@ data "aws_iam_policy_document" "lambda_worker" {
     actions = [
       "sqs:ReceiveMessage",
       "sqs:DeleteMessage",
-      "sqs:SendMessage",
       "sqs:GetQueueUrl",
     ]
     resources = [
       var.sqs_queue_arn,
-      var.sqs_dlq_arn,
     ]
   }
 }

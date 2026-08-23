@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from io import BytesIO
 from ulid import ULID
 
@@ -174,3 +175,48 @@ class TestSQSIntegration:
 
         response = sqs.receive_message(QueueUrl=dlq_url, MaxNumberOfMessages=10, WaitTimeSeconds=1)
         assert response.get("Messages", []) == []
+
+    def test_dlq_redrive(self):
+        """Verify messages that fail processing land in the DLQ.
+
+        Sends a message with a non-existent document_id to the main queue.
+        The worker should fail to process it and, after retries, the message
+        should land in the DLQ.
+        """
+        sqs = boto3.client("sqs", **_aws_config())
+
+        dlq_url = sqs.get_queue_url(QueueName=SQS_DLQ_NAME)["QueueUrl"]
+        assert dlq_url
+
+        queue_url = sqs.get_queue_url(QueueName=SQS_QUEUE_NAME)["QueueUrl"]
+        queue_attrs = sqs.get_queue_attributes(
+            QueueUrl=queue_url, AttributeNames=["RedrivePolicy"]
+        )
+        redrive_policy = json.loads(queue_attrs["Attributes"]["RedrivePolicy"])
+        assert redrive_policy["deadLetterTargetArn"]
+
+        invalid_doc_id = f"nonexistent-{ULID()}"
+        message_body = json.dumps({
+            "event_type": "DocumentCreated",
+            "document_id": invalid_doc_id,
+        })
+        sqs.send_message(QueueUrl=queue_url, MessageBody=message_body)
+
+        deadline = time.monotonic() + 60
+        dlq_message_found = False
+        while time.monotonic() < deadline:
+            response = sqs.receive_message(
+                QueueUrl=dlq_url, MaxNumberOfMessages=10, WaitTimeSeconds=5
+            )
+            messages = response.get("Messages", [])
+            for msg in messages:
+                body = json.loads(msg["Body"])
+                if body.get("document_id") == invalid_doc_id:
+                    dlq_message_found = True
+                    break
+            if dlq_message_found:
+                break
+
+        assert dlq_message_found, (
+            f"Message with document_id={invalid_doc_id} did not land in DLQ within timeout"
+        )

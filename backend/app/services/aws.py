@@ -7,7 +7,7 @@ from typing import Any
 import boto3
 from botocore.exceptions import ClientError
 
-from app.domain import Document
+from app.domain import Document, DocumentStatus
 from app.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -118,8 +118,10 @@ class AwsDocumentStore:
         document = self.get(document_id)
         if document is None:
             return
+        s3_deleted = False
         try:
             self._get_s3().delete_object(Bucket=document.bucket, Key=document.object_key)
+            s3_deleted = True
         except ClientError:
             logger.warning("s3_delete_failed document_id=%s bucket=%s key=%s",
                            document_id, document.bucket, document.object_key, exc_info=True)
@@ -131,6 +133,10 @@ class AwsDocumentStore:
         except ClientError as exc:
             if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
                 return
+            if not s3_deleted:
+                logger.error("combined_delete_failure document_id=%s s3_deleted=False dynamodb_failed=True", document_id)
+            else:
+                logger.warning("dynamodb_delete_failed document_id=%s s3_deleted=True", document_id, exc_info=True)
             raise
 
     def _get_queue_url(self) -> str:
@@ -154,6 +160,7 @@ class AwsDocumentStore:
         except Exception:
             result["dynamodb"] = "error"
         try:
+            self._queue_url = None
             self._get_queue_url()
             result["sqs"] = "ok"
         except Exception:
@@ -176,13 +183,21 @@ class AwsDocumentStore:
 
     def _deserialize_document(self, item: dict[str, Any]) -> Document:
         processed_at = item.get("processed_at")
+        raw_status = item["status"]
+        if not isinstance(raw_status, DocumentStatus):
+            try:
+                status = DocumentStatus(raw_status)
+            except ValueError:
+                raise ValueError(f"Invalid DocumentStatus value: {raw_status!r}") from None
+        else:
+            status = raw_status
         return Document(
             id=item["id"],
             name=item["name"],
             bucket=item["bucket"],
             object_key=item["object_key"],
             size=int(item["size"]),
-            status=item["status"],
+            status=status,
             created_at=datetime.fromisoformat(item["created_at"]).astimezone(UTC),
             processed_at=datetime.fromisoformat(processed_at).astimezone(UTC) if processed_at else None,
         )

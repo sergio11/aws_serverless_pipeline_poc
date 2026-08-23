@@ -14,6 +14,8 @@ from typing import Any
 import boto3
 from botocore.exceptions import ClientError
 
+# SYNC: The log_event function below is duplicated in backend/app/logging.py
+# Changes to log format must be applied to both files.
 
 logger = logging.getLogger("lambda-worker")
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -347,7 +349,7 @@ def _get_lambda_processor() -> DocumentProcessor:  # pragma: no cover
     return _lambda_processor
 
 
-def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:  # pragma: no cover
+def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     processor = _get_lambda_processor()
     results = []
     batch_item_failures: list[dict[str, str]] = []

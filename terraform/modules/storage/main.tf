@@ -36,3 +36,20 @@ resource "aws_s3_bucket_public_access_block" "documents" {
   ignore_public_acls      = true
   restrict_public_buckets = true
 }
+
+resource "aws_s3_bucket_lifecycle_configuration" "documents" {
+  bucket = aws_s3_bucket.documents.id
+
+  rule {
+    id     = "expire-incomplete-uploads"
+    status = "Enabled"
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+  }
+}

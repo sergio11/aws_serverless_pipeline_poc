@@ -16,7 +16,27 @@ This POC demonstrates production-grade AWS patterns: **Infrastructure as Code**,
 
 ---
 
-[📋 Disclaimer](#-disclaimer) · [🚀 Why This Stack?](#-why-this-stack) · [💪 Strengths & Weaknesses](#-strengths--weaknesses) · [🧭 Design Decisions](#-design-decisions) · [🏛️ Architecture](#️-architecture) · [✨ Features](#-features) · [⚙️ Configuration](#️-configuration) · [🧪 Testing](#-testing) · [🎬 Quick Start](#-quick-start) · [📁 Project Structure](#-project-structure) · [🔧 Rake Commands](#-rake-commands)
+[🎯 Objectives](#-platform-objectives) · [📋 Disclaimer](#-disclaimer) · [🚀 Why This Stack?](#-why-this-stack) · [💪 Strengths & Weaknesses](#-strengths--weaknesses) · [🧭 Design Decisions](#-design-decisions) · [🏛️ Architecture](#️-architecture) · [✨ Features](#-features) · [⚙️ Configuration](#-configuration) · [🧪 Testing](#-testing) · [🎬 Quick Start](#-quick-start) · [📁 Project Structure](#-project-structure) · [🔧 Rake Commands](#-rake-commands)
+
+---
+
+## 🎯 Platform Objectives
+
+This platform POC is designed to demonstrate and validate cloud-grade architecture patterns in a 100% local environment. Each component was deliberately chosen to replicate real production decisions, eliminating AWS account dependencies and cloud costs.
+
+- 🏗️ **Infrastructure as Code (Modular Terraform)** — Declarative and idempotent provisioning of the entire infrastructure through 6 independent modules (storage, database, messaging, compute, iam, monitoring) with clean interfaces and explicit dependency chains.
+
+- ⚡ **Event-Driven Architecture (SQS + Lambda)** — Decoupled asynchronous communication between the REST API and the distributed processor, utilizing Dead Letter Queue (DLQ) for poison pill isolation and resilient retries.
+
+- 🔒 **Distributed Locking (DynamoDB Conditional Writes)** — Atomic distributed locking via `ConditionExpression` in DynamoDB, preventing race conditions between workers with expired lock detection and owner-based release.
+
+- 📨 **Idempotent Processing** — The worker verifies document status before processing, skipping already-processed documents (status=PROCESSED) and using atomic locks to prevent double concurrent processing.
+
+- 🧪 **Local-First Development (Zero Cost)** — The entire stack (API, Lambda, SQS, DynamoDB, S3, CloudWatch) runs locally via Floci as an AWS emulator, enabling fast iteration cycles without AWS accounts or billing.
+
+- 🐳 **Containerized Workflows (Podman)** — Complete orchestration via Podman Compose with 7 services, separate worker/lambda profiles, multi-stage builds for testing, and security hardening (rootless, no-new-privileges).
+
+- 📊 **Observability (CloudWatch Dashboards + Alarms)** — Centralized dashboard with SQS depth, Lambda errors/throttles, and DLQ depth metrics, backed by 4 configured alarms and SNS notifications for proactive alerting.
 
 ---
 
@@ -34,63 +54,59 @@ The primary focus is to explore **Terraform modularity**, **serverless processin
 
 ### 🐍 Python + FastAPI
 
-Python was chosen for its ubiquity in cloud-native development and FastAPI for its async-first architecture, automatic OpenAPI schema generation, and native Pydantic validation. The backend demonstrates a clean layered architecture:
+Python was chosen for its ubiquity in cloud-native development and its mature ecosystem for AWS services (boto3). FastAPI complements this choice with an async-first architecture that handles I/O operations — such as calls to S3, DynamoDB, and SQS — without blocking the event loop. Native Pydantic validation on request/response schemas eliminates entire classes of bugs at compile time, and automatic OpenAPI generation enables interactive API exploration without additional documentation.
 
-- **Routes** → HTTP layer (request/response handling)
-- **Services** → Business logic (DocumentService with Protocol-based DI)
-- **Stores** → Infrastructure adapters (AwsDocumentStore with boto3)
+FastAPI's dependency injection system is the cornerstone of the backend's layered architecture. The `DocumentStore` Protocol (Python's structural subtyping) defines the contract, `AwsDocumentStore` implements it for production, and `InMemoryDocumentStore` enables complete testing without any AWS connectivity. This follows the **Dependency Inversion Principle** — high-level modules don't depend on low-level modules; both depend on abstractions. The factory `create_app()` in `main.py:9` allows injecting any protocol implementation, making the service layer completely testable in isolation.
 
-FastAPI's dependency injection system enables testing the full service layer without any AWS connectivity using an `InMemoryDocumentStore`.
+The result is a clean separation: **Routes** (HTTP layer) → **Services** (business logic) → **Stores** (infrastructure adapters). Each layer has a single responsibility and can be mocked or replaced independently.
 
 ### 🏗️ Terraform (Infrastructure as Code)
 
-Terraform provides **idempotent**, **declarative** infrastructure provisioning with full state management. The project uses a **modular architecture** with 6 composable modules:
+Terraform was chosen for its declarative and idempotent approach: you describe the desired state of the infrastructure and Terraform calculates the execution plan needed to reach it. This guarantees that running `terraform apply` multiple times produces the same result, eliminating the "configuration drift" that plagues manual environments. State managed centrally in a Podman volume (`terraform-workdir`) allows destroying and rebuilding the entire infrastructure in seconds.
 
-| Module | Purpose |
-|--------|---------|
-| `storage` | S3 bucket with versioning, encryption, lifecycle policies |
-| `database` | DynamoDB table with PITR and deletion protection |
-| `messaging` | SQS queue + DLQ with KMS encryption and redrive policy |
-| `compute` | Lambda function + SQS event source mapping |
-| `iam` | IAM role with least-privilege policies |
-| `monitoring` | CloudWatch dashboard + 4 metric alarms + SNS |
+The modular architecture with 6 independent modules (`storage`, `database`, `messaging`, `compute`, `iam`, `monitoring`) allows each concern to be testable and reusable independently. Each module exposes clean outputs (ARNs, names, URLs) that other modules consume, creating explicit dependency chains: `storage + database + messaging → iam → compute`. This modularization is exactly the pattern used in production — the POC demonstrates that the same structure works locally with Floci.
 
-The modular design means each concern is independently testable, versionable, and reusable across projects.
+The declarative approach also facilitates clean destruction: `terraform destroy` removes all resources in the correct dependency order. For an educational POC, this is critical — it enables complete `provision → test → destroy → rebuild` cycles without residue or manual configuration.
 
 ### 🐳 Podman (Rootless Containers)
 
-Podman was chosen over Docker for several deliberate reasons:
+Podman was deliberately chosen over Docker for security and architectural reasons. It runs containers **without a daemon** and **without root privileges** by default — each container is a direct child process of the user, eliminating the attack surface represented by Docker's root daemon. This is especially relevant for a POC that mounts the Docker socket (`/var/run/docker.sock`) for Floci's Lambda simulation: running this in a rootless context significantly reduces risk.
 
-- **Rootless by default** — no daemon, no root privileges, significantly reduced attack surface
-- **Daemonless architecture** — each container is a direct child of the user process
-- **Docker-compatible CLI** — `podman-compose` works as a drop-in replacement
-- **Security hardening** — containers run with `no-new-privileges:true` and `tmpfs /tmp`
+CLI compatibility with Docker (`podman-compose` as a drop-in replacement) means the `compose.yaml` works with both tools without modifications. Containers run with `no-new-privileges:true` and `tmpfs /tmp`, applying security hardening that reflects production best practices. Each service has configured memory and CPU limits, and logs rotate automatically with `max-size` and `max-file`.
+
+The result is a development experience identical to Docker but with a fundamentally superior security model: no central daemon, no root, and each container isolated as an independent user process.
 
 ### ⚡ Floci (Local AWS Emulator)
 
-Floci provides an API-compatible emulation of core AWS services (S3, DynamoDB, SQS, Lambda) on a single port (4566). This enables:
+Floci emulates the complete API of core AWS services (S3, DynamoDB, SQS, Lambda) on a single port (4566), providing API parity with real services. This allows the same boto3 code — the same `PutObject`, `PutItem`, `SendMessage` calls — to work both locally against Floci and in production against real AWS. No conditional imports, no special configuration, no mocks: the code is identical.
 
-- **Zero-cost development** — no AWS account or billing required
-- **Fast iteration cycles** — no network latency for local development
-- **CI/CD parity** — the same tests run locally and in production
-- **Persistent state** — hybrid storage mode survives container restarts
+Zero-cost development is an obvious advantage, but CI/CD parity is the real benefit. Integration and E2E tests run against the same emulated API that the backend uses in development, ensuring that if tests pass locally, they will pass against real AWS (assuming configuration parity). The `hybrid` storage mode preserves state across container restarts, enabling iteration without reprovisioning the complete infrastructure each cycle.
+
+Iteration speed is the other key benefit: no network latency, no cold starts, no service limits. A complete `terraform apply → backend start → test → destroy` cycle takes seconds, not minutes. For an educational POC, this immediate feedback is invaluable for experimenting and learning.
 
 ### 📨 SQS + DLQ (Event-Driven Decoupling)
 
-The architecture uses SQS as the communication backbone between the REST API and the async processor. The Dead Letter Queue (DLQ) pattern ensures:
+SQS acts as the communication backbone between the REST API and the asynchronous processor, implementing the **event-driven architecture** pattern fundamental to distributed systems. The API publishes `DocumentCreated` events and forgets — it doesn't wait for processing confirmation, doesn't know the consumer, doesn't couple to its logic. This allows independent scaling of producers and consumers, and adding new consumers without modifying the API.
 
-- **Poison pill isolation** — malformed messages are quarantined after 3 retries
-- **Observability** — CloudWatch alarms on DLQ depth provide early warning
-- **Retry resilience** — failed messages don't block the main queue
+The Dead Letter Queue (DLQ) with `maxReceiveCount=3` implements the **poison pill isolation** pattern: malformed messages or those causing repeated errors are automatically moved to the dead letter queue after 3 attempts, preventing them from blocking the main queue. CloudWatch alarms on DLQ depth provide early observability — an operator knows immediately when something fails without manually reviewing logs.
+
+Error handling in `lambda_handler` with `ReportBatchItemFailures` demonstrates the **retry resilience** pattern: each message is processed independently, failures don't affect successful messages, and messages blocked by distributed locks are returned to the queue for later retry. This is exactly how a real Lambda would work in production.
 
 ### 🔒 Distributed Locking (DynamoDB Conditional Writes)
 
-The Lambda worker implements a distributed processing lock using DynamoDB conditional writes:
+The distributed lock implemented via DynamoDB conditional writes is the POC's most sophisticated pattern, demonstrating how to coordinate concurrent work without a centralized coordinator. The `_acquire_processing_lock` operation in `handler.py:156` uses `ConditionExpression="attribute_not_exists(processing_owner) AND #status <> :processed"` to guarantee that only one worker can acquire the lock per document — the operation is atomic at the DynamoDB level.
 
-- **Atomic lock acquisition** — `ConditionExpression` prevents race conditions
-- **Owner-based release** — only the lock owner can release it
-- **Expired lock detection** — locks older than 300 seconds are force-released
-- **Idempotent processing** — already-processed documents are skipped
+Owner-based release (`ConditionExpression="processing_owner = :owner"`) prevents a worker from accidentally releasing another worker's lock. Expired lock detection (>300 seconds) enables automatic recovery when a worker dies without releasing its lock. Idempotent processing — documents with `status=PROCESSED` are skipped — guarantees that retries don't cause duplicate processing.
+
+This pattern is exactly what would be used in production with real DynamoDB. The only difference is the endpoint: `localhost:4566` vs `dynamodb.eu-west-1.amazonaws.com`. The POC demonstrates that the concurrency logic, error handling, and failure recovery work correctly without needing an AWS account.
+
+### 🔑 ULID vs UUID
+
+ULIDs (Universally Unique Lexicographically Sortable Identifiers) were chosen over conventional UUIDs for two concrete advantages. First, ULIDs are **lexicographically orderable** — a ULID generated later has a string greater than one generated before. This is fundamental for DynamoDB, where ID order determines result order in queries without GSIs, and for S3, where ordered object keys facilitate listing and debugging.
+
+Second, ULIDs are **collision-free** and **time-ordered**: each ID incorporates a 48-bit timestamp (milliseconds) + 80 bits of randomness, guaranteeing uniqueness without coordination. Unlike UUIDv4 which is completely random, the temporal component of ULID allows reconstructing the document creation timeline — an invaluable property for debugging and auditing in distributed systems.
+
+The implementation in `documents.py:88` is trivial: `document_id = str(ULID())`. No namespace configuration, no synchronized clock dependencies, no practical collision risk. It's the correct choice for entity identifiers in a system combining DynamoDB (order matters) and S3 (paths matter).
 
 ---
 
@@ -100,28 +116,30 @@ The Lambda worker implements a distributed processing lock using DynamoDB condit
 
 | Aspect | Detail |
 |--------|--------|
-| **Zero cloud cost** | Entire stack runs locally. No AWS account, no billing, no surprise charges. |
-| **Production-grade patterns** | IaC, event-driven architecture, DLQ, distributed locking, idempotency — all patterns used in real production systems. |
-| **Modular Terraform** | 6 independent modules with clear interfaces. Each module is reusable across projects. |
-| **Layered architecture** | Clean separation: Routes → Services → Stores. Protocol-based DI enables testing without AWS. |
-| **Comprehensive testing** | Unit tests (98%+ coverage), integration tests against Floci, and end-to-end workflow validation. |
-| **Dual-purpose Lambda** | The same `handler.py` works as a Lambda function AND as a polling worker — demonstrating serverless and long-polling patterns. |
-| **Observability** | CloudWatch dashboard, 4 metric alarms, SNS notifications, structured JSON logging across all services. |
-| **Idempotent processing** | DynamoDB conditional writes prevent double-processing. Already-processed documents are skipped gracefully. |
-| **Reproducible automation** | Rake as the single entry point for all development, testing, and deployment workflows. |
-| **Security hardening** | Rootless Podman, no-new-privileges, credential isolation, KMS encryption on SQS. |
+| **Zero cloud cost** | The entire stack runs locally with Floci. No AWS account required, no billing, no surprise charges. |
+| **Production-grade patterns** | IaC with Terraform, event-driven architecture, DLQ, distributed locking, and idempotent processing — all patterns used in real production systems. |
+| **Modular Terraform** | 6 independent modules (`storage`, `database`, `messaging`, `compute`, `iam`, `monitoring`) with clean interfaces. Each module is reusable across projects. |
+| **Layered architecture** | Clean separation: Routes (HTTP) → DocumentService (logic) → DocumentStore (Protocol). Protocol-based dependency injection enables complete testing without AWS. |
+| **Dual-purpose Lambda** | The same `handler.py` works as both a Lambda function AND a polling worker — demonstrating serverless and long-polling patterns in a single file. |
+| **Distributed locking** | DynamoDB conditional writes with `ConditionExpression` prevent worker races. Locks expire at 300s and release is owner-verified. |
+| **Idempotent processing** | Already-processed documents are gracefully skipped. DynamoDB conditional writes prevent double processing. |
+| **Observability** | CloudWatch dashboard with 4 alarms (DLQ, Lambda errors, throttles, SQS depth), SNS notifications, and structured JSON logging across all services. |
+| **Security hardening** | Rootless Podman, `no-new-privileges:true`, `tmpfs /tmp`, credential isolation, and KMS encryption on SQS. |
+| **Comprehensive testing** | Unit tests with 98%+ coverage on backend and worker, integration tests against Floci, and E2E validating the complete `CREATED → PROCESSING → PROCESSED` flow. |
+| **Reproducible automation** | Rake as the single entry point for development, testing, and deployment. `rake up` brings up the entire stack with one command. |
 
 ### ⚠️ Weaknesses / Tradeoffs
 
 | Aspect | Detail |
 |--------|--------|
-| **Local emulator fidelity** | Floci does not replicate AWS service limits, IAM policies, VPC networking, or eventual consistency behaviors. |
-| **No real Lambda cold starts** | Floci Lambda execution via Docker-in-Docker doesn't simulate real Lambda cold start latency or concurrency limits. |
-| **Single-region only** | The architecture assumes a single AWS region. Cross-region replication is not addressed. |
-| **No TLS termination** | The backend serves plain HTTP. A production deployment would require a reverse proxy or ALB. |
-| **Stateful Terraform** | The Terraform state is stored in a Podman volume. A production setup would use S3 + DynamoDB for remote state. |
-| **DocumentStatus duplication** | The enum is intentionally duplicated between `backend/app/domain.py` and `lambda/handler.py` with sync verification tests — a pragmatic tradeoff for Lambda packaging simplicity. |
-| **No CI/CD pipeline** | While Rake tasks replicate CI validation locally, no GitHub Actions or similar pipeline is configured. |
+| **Local emulator fidelity** | Floci doesn't replicate AWS service limits, IAM policies, VPC networking, or eventual consistency behaviors. Tests may pass locally but fail on real AWS. |
+| **No real Lambda cold starts** | Lambda execution in Floci uses Docker-in-Docker, which doesn't simulate real cold start latency or Lambda service concurrency limits. |
+| **Single-region only** | The architecture assumes a single AWS region. Cross-region replication and multi-region failover are not addressed. |
+| **No TLS termination** | The backend serves plain HTTP. A production deployment would require a reverse proxy (nginx) or ALB for TLS. |
+| **Stateful Terraform** | State is stored in a Podman volume (`terraform-workdir`). Production should use S3 + DynamoDB for remote state with locking. |
+| **DocumentStatus duplication** | The `DocumentStatus` enum is duplicated between `backend/app/domain.py` and `lambda/handler.py` with sync verification tests — a pragmatic tradeoff for Lambda packaging simplicity. |
+| **Docker socket exposure** | The `/var/run/docker.sock` mount grants full Docker daemon control to the Floci container. Required for Lambda simulation but insecure for production. |
+| **No CI/CD pipeline** | While Rake replicates CI validations locally, no GitHub Actions or external pipeline is configured. Validation depends on running `rake test` manually. |
 
 ---
 
@@ -135,39 +153,69 @@ The backend follows a strict three-layer architecture:
 Routes (HTTP) → DocumentService (business) → DocumentStore (protocol) → AwsDocumentStore (AWS)
 ```
 
-The `DocumentStore` Protocol (Python's structural subtyping) defines the contract. `AwsDocumentStore` implements it for production, while `InMemoryDocumentStore` enables testing without any AWS connectivity. This follows the **Dependency Inversion Principle** — high-level modules don't depend on low-level modules; both depend on abstractions.
+The `DocumentStore` Protocol (`backend/app/services/documents.py:18-43`) defines the contract via Python's *structural subtyping*. Each method is explicitly declared with `# pragma: no cover` to emphasize it's an interface, not a concrete implementation. `AwsDocumentStore` implements it for production using boto3, while `InMemoryDocumentStore` (`backend/app/services/documents.py:45-77`) stores data in Python dictionaries for tests without any AWS connectivity.
+
+Dependency injection occurs in `create_app()` (`backend/app/main.py:9-18`): the `document_service` is injected as an optional parameter, and if not provided, it's built with `AwsDocumentStore`. This allows overriding the complete store in tests:
+
+```python
+class DocumentStore(Protocol):
+    def save(self, document: Document, content: str) -> None: ...
+    def get(self, document_id: str) -> Document | None: ...
+```
+
+This separation follows the **Dependency Inversion Principle** — high-level modules don't depend on low-level modules; both depend on abstractions. The result is a service layer testable at 98%+ without AWS mocks.
+
+---
 
 ### ⚡ Dual-Purpose Lambda Handler
 
-The `lambda/handler.py` serves two roles:
+The `lambda/handler.py` file serves two simultaneous roles:
 
-1. **Lambda Function** — `lambda_handler(event, context)` processes SQS batch records with `ReportBatchItemFailures` support
-2. **Polling Worker** — `SqsWorker` polls SQS with configurable intervals, including health check server and graceful shutdown
+1. **Lambda Function** — `lambda_handler(event, context)` processes SQS record batches with `ReportBatchItemFailures` support. Failed SQS messages are returned to the queue for retry, and successful ones are deleted. The processor is initialized once at module level (`_lambda_processor`) to reuse connections on *warm starts*.
 
-This dual design demonstrates that the same processing logic can run in both serverless and long-polling contexts — a common pattern in hybrid cloud architectures.
+2. **Polling Worker** — `SqsWorker` runs a continuous polling loop with `receive_message`, a health check server on port 8080, and graceful shutdown via SIGTERM/SIGINT signals. Activatable with `--poll` or `--once`.
+
+This design demonstrates that the same processing logic can run in both serverless and long-polling contexts — a common pattern in hybrid architectures where a fallback is needed when Floci Lambda is unavailable. The `DocumentProcessor` class is shared between both modes, eliminating business logic duplication.
+
+---
 
 ### 🔒 Distributed Lock via DynamoDB
 
-The worker uses DynamoDB conditional writes as a distributed lock mechanism:
+The worker uses DynamoDB *conditional writes* as a distributed locking mechanism. The key expression is:
 
 ```python
 ConditionExpression="attribute_not_exists(processing_owner) AND #status <> :processed"
 ```
 
-This ensures:
-- Only one worker processes a document at a time
-- Already-processed documents are never reprocessed
-- Expired locks (> 300s) are automatically released
-- Lock release is owner-gated (prevents accidental release by other workers)
+This guarantees atomicity: only one worker can acquire the lock for a document at a time. The condition verifies two things simultaneously — that no current owner exists (`attribute_not_exists`) and that the document isn't already processed (`#status <> :processed`). If another worker already acquired the lock, DynamoDB throws `ConditionalCheckFailedException` and the worker returns the message to the queue.
+
+Lock release is owner-gated: only the worker that acquired it can release it:
+
+```python
+ConditionExpression="processing_owner = :owner"
+```
+
+Additionally, expired lock detection (`MAX_LOCK_AGE_SECONDS = 300`) is implemented: if a lock is older than 5 minutes, any worker can force its release using `_force_release_expired_lock`, preventing documents from being permanently blocked by dead workers.
+
+---
 
 ### 📦 Container Topology with Compose Profiles
 
-The `compose.yaml` uses Docker Compose profiles to separate concerns:
+The `compose.yaml` uses Docker Compose profiles to separate responsibilities:
 
-- **Default** — Floci + Terraform + Backend + UI (core development)
-- **Worker profile** — Lambda worker fallback (only when Floci Lambda is unavailable)
+- **Default profile** — Floci + Terraform + Backend + UI + tests. The main development stack that any developer runs with `rake up`.
+- **`worker` profile** — Only `lambda-worker` and `lambda-worker-test`. Explicitly activated with `podman-compose --profile worker up`.
 
-This prevents the common anti-pattern of starting conflicting consumers on the same queue.
+The reason is to avoid the anti-pattern of two consumers competing for the same SQS queue simultaneously. The `lambda-worker` is a fallback used only when Floci Lambda is unavailable — the Terraform Lambda is the primary processor. The explicit comment in `compose.yaml:170-173` documents this restriction:
+
+```yaml
+# WARNING: Do NOT start both this worker and the Terraform Lambda simultaneously.
+# They consume the same SQS queue and would create a race condition.
+```
+
+Profiles also allow running worker tests in isolation (`--profile worker`) without affecting the main stack.
+
+---
 
 ### 📊 Terraform Module Composition
 
@@ -178,7 +226,26 @@ storage + database + messaging → iam → compute
 messaging + lambda → monitoring
 ```
 
-Each module exposes clean outputs (ARNs, names, URLs) that other modules consume. This makes modules independently testable and reusable.
+The three base modules (`storage`, `database`, `messaging`) are instantiated first without dependencies between them. The `iam` module receives the resulting ARNs (`bucket_arn`, `table_arn`, `queue_arn`) to create least-privilege policies. Only then can `compute` be deployed, as it needs the `role_arn` from IAM and the `queue_arn` from messaging for the event source mapping. `monitoring` depends on `messaging` (queue names) and `compute` (Lambda function name) to configure alarms and dashboard.
+
+Each module exposes clean outputs (ARNs, names, URLs) that other modules consume. This modular composition means each concern is independently testable and reusable — the `storage` module for example, could be reused in any project needing an S3 bucket with versioning and lifecycle policies.
+
+---
+
+### 🔄 Idempotent Document Processing
+
+The document lifecycle implements an explicit state machine:
+
+```text
+CREATED → PROCESSING → PROCESSED
+    └→ FAILED (on error)
+```
+
+Idempotency is achieved at multiple levels. In `DocumentProcessor.process()` (`lambda/handler.py:110-154`), the first step is to verify the document's current status: if it's already `PROCESSED`, `"skipped"` is returned immediately. This prevents reprocessing even if the SQS message arrives multiple times.
+
+The `CREATED → PROCESSING` transition occurs under the distributed lock, guaranteeing that only one worker performs the transition. If processing fails, `FAILED` is set and the lock is released. Cleanup in `DocumentService.create_document()` (`backend/app/services/documents.py:87-122`) is also idempotent: if SQS fails after saving to S3/DynamoDB, both stores are cleaned up before propagating the error.
+
+Tests explicitly verify these scenarios: already-processed documents are skipped, conflicting locks are returned to the queue, and infrastructure errors trigger correct rollback.
 
 ---
 
@@ -188,27 +255,43 @@ Each module exposes clean outputs (ARNs, names, URLs) that other modules consume
 
 ```mermaid
 graph TB
-    subgraph "🐳 Podman Network: poc-network"
-        direction TB
+    subgraph CLIENTE["🌐 Client Layer"]
+        CLIENT["🌐 Client<br/>HTTP/REST"]
+    end
 
+    subgraph APLICACION["🟢 Application Layer"]
+        direction TB
+        BACKEND["⚡ Backend<br/>FastAPI REST API<br/>:8000"]
+        WORKER["🔄 Worker<br/>Polling Fallback<br/>:8080"]
+    end
+
+    subgraph COMPUTE["🟠 Compute Layer"]
+        direction TB
+        LAMBDA["λ Lambda<br/>Document Processor"]
+    end
+
+    subgraph DOCKER["🐳 Docker-in-Docker Layer"]
+        DOCKER_SOCK["🔌 Docker Socket<br/>/var/run/docker.sock"]
+    end
+
+    subgraph AWS_LOCAL["☁️ AWS Services (Local)"]
+        direction LR
+        S3["📦 S3<br/>Document<br/>Storage"]
+        DDB["🗄️ DynamoDB<br/>Metadata<br/>+ Lock"]
+        SQS["📨 SQS<br/>Event<br/>Queue"]
+        DLQ["💀 DLQ<br/>Dead Letter<br/>Queue"]
+        CW["📊 CloudWatch<br/>Dashboard<br/>+ Alarms"]
+        SNS["📢 SNS<br/>Alarm<br/>Notifications"]
+    end
+
+    subgraph INFRAESTRUCTURA["🔵 Infrastructure"]
+        direction LR
         FLOCI["🔵 Floci<br/>AWS Emulator<br/>:4566"]
         FLOCI_UI["🖥️ Floci UI<br/>Web Console<br/>:4500"]
         TERRAFORM["🏗️ Terraform<br/>IaC Runner"]
-        BACKEND["⚡ Backend<br/>FastAPI REST API<br/>:8000"]
-        LAMBDA["λ Lambda<br/>Document Processor"]
-        WORKER["🔄 Worker<br/>Polling Fallback<br/>:8080"]
-
-        subgraph "☁️ AWS Services (Local)"
-            direction LR
-            S3["📦 S3<br/>Document Storage"]
-            DDB["🗄️ DynamoDB<br/>Metadata Store"]
-            SQS["📨 SQS<br/>Document Events"]
-            DLQ["💀 DLQ<br/>Dead Letters"]
-            CW["📊 CloudWatch<br/>Dashboard & Alarms"]
-        end
     end
 
-    CLIENT["🌐 Client"] -->|"HTTP"| BACKEND
+    CLIENT -->|"HTTP REST"| BACKEND
     BACKEND -->|"PUT object"| S3
     BACKEND -->|"PutItem"| DDB
     BACKEND -->|"SendMessage"| SQS
@@ -217,28 +300,45 @@ graph TB
     LAMBDA -->|"GetObject"| S3
     LAMBDA -->|"GetItem/UpdateItem"| DDB
     WORKER -.->|"poll (fallback)"| SQS
+    LAMBDA -.->|"Docker-in-Docker"| DOCKER_SOCK
+    DOCKER_SOCK -.->|"executes"| FLOCI
+    CW -->|"alarms"| SNS
+    DLQ -->|"min messages"| CW
     FLOCI --> S3
     FLOCI --> DDB
     FLOCI --> SQS
     FLOCI --> LAMBDA
-    FLOCI_UI -->|"browse"| FLOCI
-    TERRAFORM -->|"provision"| S3
-    TERRAFORM -->|"provision"| DDB
-    TERRAFORM -->|"provision"| SQS
-    TERRAFORM -->|"provision"| LAMBDA
-    TERRAFORM -->|"provision"| CW
+    FLOCI_UI -->|"browses"| FLOCI
+    TERRAFORM -->|"provisions"| S3
+    TERRAFORM -->|"provisions"| DDB
+    TERRAFORM -->|"provisions"| SQS
+    TERRAFORM -->|"provisions"| LAMBDA
+    TERRAFORM -->|"provisions"| CW
 
+    style CLIENTE fill:#E8EAF6,color:#000,stroke:#3F51B5
+    style APLICACION fill:#E8F5E9,color:#000,stroke:#4CAF50
+    style COMPUTE fill:#FFF3E0,color:#000,stroke:#FF9800
+    style DOCKER fill:#FFFDE7,color:#000,stroke:#FBC02D
+    style AWS_LOCAL fill:#E0F7FA,color:#000,stroke:#00BCD4
+    style INFRAESTRUCTURA fill:#E3F2FD,color:#000,stroke:#2196F3
     style FLOCI fill:#2196F3,color:#fff,stroke:#1565C0
     style BACKEND fill:#4CAF50,color:#fff,stroke:#2E7D32
     style LAMBDA fill:#FF9800,color:#fff,stroke:#E65100
+    style WORKER fill:#FF9800,color:#fff,stroke:#E65100
     style S3 fill:#00BCD4,color:#fff,stroke:#00838F
     style DDB fill:#9C27B0,color:#fff,stroke:#6A1B9A
     style SQS fill:#F44336,color:#fff,stroke:#C62828
     style DLQ fill:#795548,color:#fff,stroke:#4E342E
     style CW fill:#607D8B,color:#fff,stroke:#37474F
+    style SNS fill:#F44336,color:#fff,stroke:#C62828
+    style TERRAFORM fill:#2196F3,color:#fff,stroke:#1565C0
+    style FLOCI_UI fill:#2196F3,color:#fff,stroke:#1565C0
+    style DOCKER_SOCK fill:#FBC02D,color:#000,stroke:#F9A825
 ```
 
-### 🔄 Document Lifecycle (Sequence Diagram)
+---
+
+### 🔄 Document Flow (Sequence Diagram)
 
 ```mermaid
 sequenceDiagram
@@ -250,25 +350,41 @@ sequenceDiagram
     participant SQS as 📨 SQS
     participant DLQ as 💀 DLQ
     participant L as λ Lambda
-    participant MON as 📊 CloudWatch
+    participant CW as 📊 CloudWatch
+    participant SNS as 📢 SNS
 
-    C->>API: POST /documents {name, content}
-    API->>S3: PutObject (documents/{id}/{name})
-    S3-->>API: OK
-    API->>DDB: PutItem (metadata + status=CREATED)
-    DDB-->>API: OK
-    API->>SQS: SendMessage (DocumentCreated event)
-    SQS-->>API: OK
-    API-->>C: 201 {id, name, status: created}
+    rect rgb(232, 245, 233)
+        Note over C,API: 📝 Document Creation (Synchronous)
+        C->>API: POST /documents {name, content}
+        API->>S3: PutObject (documents/{id}/{name})
+        S3-->>API: OK
+        API->>DDB: PutItem (metadata + status=CREATED)
+        DDB-->>API: OK
+        API->>SQS: SendMessage (DocumentCreated event)
+        SQS-->>API: OK
+        API-->>C: 201 {id, name, status: created}
+    end
 
-    SQS->>L: EventSourceMapping (batch)
-    L->>DDB: GetItem (fetch document)
-    DDB-->>L: metadata
+    rect rgb(255, 243, 224)
+        Note over SQS,L: ⚡ Asynchronous Processing (Lambda)
+        SQS->>L: EventSourceMapping (batch of 10)
+        L->>DDB: GetItem (fetch document)
+        DDB-->>L: metadata
+    end
 
-    alt Already processed
-        L-->>L: Skip (idempotent)
+    alt Document already processed
+        L-->>L: ⏭️ Skip (idempotent)
     else Lock held by another worker
-        L-->>L: Defer (return to queue)
+        L-->>L: ⏸️ Defer (return to queue)
+    else Lock expired (>300s)
+        L->>DDB: UpdateItem (force release lock)
+        DDB-->>L: OK
+        L->>DDB: UpdateItem (acquire new lock)
+        DDB-->>L: OK
+        L->>S3: GetObject (read content)
+        S3-->>L: content bytes
+        L->>DDB: UpdateItem (status=PROCESSED, size, processed_at)
+        L->>DDB: RemoveItem (release lock)
     else Processable
         L->>DDB: UpdateItem (lock + status=PROCESSING)
         L->>S3: GetObject (read content)
@@ -278,75 +394,228 @@ sequenceDiagram
     end
 
     L-->>SQS: DeleteMessage (on success)
-    SQS-.->DLQ: Move after 3 retries (on failure)
-    DLQ->>MON: Alarm triggers (DLQ not empty)
+
+    rect rgb(252, 228, 236)
+        Note over SQS,SNS: 💀 Failure Handling (DLQ)
+        SQS-.->DLQ: Move after 3 retries (on failure)
+        DLQ->>CW: ⚠️ Alarm triggers (DLQ not empty)
+        CW->>SNS: 📢 Notify subscribers
+    end
 ```
+
+---
 
 ### 🏗️ Terraform Module Composition
 
 ```mermaid
-graph LR
-    subgraph "Root Module"
-        ROOT[terraform/main.tf]
+graph TB
+    subgraph ROOT["📌 Root Module"]
+        MAIN["terraform/main.tf<br/>Module Composition"]
     end
 
-    subgraph "Modules"
-        STORAGE[📦 storage<br/>S3 Bucket]
-        DATABASE[🗄️ database<br/>DynamoDB Table]
-        MESSAGING[📨 messaging<br/>SQS + DLQ]
-        IAM[🔐 iam<br/>Lambda Role]
-        COMPUTE[⚡ compute<br/>Lambda + ESM]
-        MONITORING[📊 monitoring<br/>CW Dashboard + Alarms]
+    subgraph MODULOS["📦 Terraform Modules"]
+        direction TB
+
+        subgraph STORAGE_MOD["🗄️ Storage Module"]
+            S3_MOD["📦 storage<br/>S3 Bucket<br/>Versioning + Encryption<br/>+ Lifecycle Policies"]
+        end
+
+        subgraph DATABASE_MOD["🗄️ Database Module"]
+            DDB_MOD["🗄️ database<br/>DynamoDB Table<br/>PITR + Deletion<br/>Protection"]
+        end
+
+        subgraph MESSAGING_MOD["📨 Messaging Module"]
+            SQS_MOD["📨 messaging<br/>SQS + DLQ<br/>KMS Encryption<br/>+ Redrive Policy"]
+        end
+
+        subgraph IAM_MOD["🔐 IAM Module"]
+            IAM_MOD_F["🔐 iam<br/>Lambda Role<br/>Least-Privilege<br/>Policies"]
+        end
+
+        subgraph COMPUTE_MOD["⚡ Compute Module"]
+            LAMBDA_MOD["⚡ compute<br/>Lambda Function<br/>+ EventSource<br/>Mapping"]
+        end
+
+        subgraph MONITORING_MOD["📊 Monitoring Module"]
+            CW_MOD["📊 monitoring<br/>CloudWatch Dashboard<br/>+ 4 Metric Alarms<br/>+ SNS"]
+        end
     end
 
-    ROOT --> STORAGE
-    ROOT --> DATABASE
-    ROOT --> MESSAGING
-    ROOT --> IAM
-    ROOT --> COMPUTE
-    ROOT --> MONITORING
+    MAIN --> S3_MOD
+    MAIN --> DDB_MOD
+    MAIN --> SQS_MOD
+    MAIN --> IAM_MOD_F
+    MAIN --> LAMBDA_MOD
+    MAIN --> CW_MOD
 
-    STORAGE -.->|bucket_arn| IAM
-    DATABASE -.->|table_arn| IAM
-    MESSAGING -.->|queue_arn| IAM
-    MESSAGING -.->|queue_arn| COMPUTE
-    IAM -.->|role_arn| COMPUTE
-    MESSAGING -.->|queue_name + dlq_name| MONITORING
-    COMPUTE -.->|function_name| MONITORING
+    S3_MOD -.->|"bucket_arn"| IAM_MOD_F
+    DDB_MOD -.->|"table_arn"| IAM_MOD_F
+    SQS_MOD -.->|"queue_arn"| IAM_MOD_F
+    SQS_MOD -.->|"queue_arn"| LAMBDA_MOD
+    IAM_MOD_F -.->|"role_arn"| LAMBDA_MOD
+    SQS_MOD -.->|"queue_name + dlq_name"| CW_MOD
+    LAMBDA_MOD -.->|"function_name"| CW_MOD
 
-    style STORAGE fill:#00BCD4,color:#fff,stroke:#00838F
-    style DATABASE fill:#9C27B0,color:#fff,stroke:#6A1B9A
-    style MESSAGING fill:#F44336,color:#fff,stroke:#C62828
-    style IAM fill:#FF9800,color:#fff,stroke:#E65100
-    style COMPUTE fill:#4CAF50,color:#fff,stroke:#2E7D32
-    style MONITORING fill:#607D8B,color:#fff,stroke:#37474F
+    subgraph DEPENDENCY_CHAIN["🔗 Dependency Chain"]
+        direction LR
+        D1["storage + database<br/>+ messaging"] -.->|"ARNs"| D2["iam<br/>(role + policies)"]
+        D2 -.->|"role_arn"| D3["compute<br/>(Lambda + ESM)"]
+        D3 -.->|"function_name"| D4["monitoring<br/>(dashboard + alarms)"]
+        D5["messaging"] -.->|"queue_name"| D4
+    end
+
+    style ROOT fill:#2196F3,color:#fff,stroke:#1565C0
+    style MODULOS fill:#E3F2FD,color:#000,stroke:#1565C0
+    style DEPENDENCY_CHAIN fill:#FFF3E0,color:#000,stroke:#FF9800
+    style S3_MOD fill:#00BCD4,color:#fff,stroke:#00838F
+    style DDB_MOD fill:#9C27B0,color:#fff,stroke:#6A1B9A
+    style SQS_MOD fill:#F44336,color:#fff,stroke:#C62828
+    style IAM_MOD_F fill:#FF9800,color:#fff,stroke:#E65100
+    style LAMBDA_MOD fill:#4CAF50,color:#fff,stroke:#2E7D32
+    style CW_MOD fill:#607D8B,color:#fff,stroke:#37474F
+    style STORAGE_MOD fill:#E0F7FA,color:#000,stroke:#00BCD4
+    style DATABASE_MOD fill:#F3E5F5,color:#000,stroke:#9C27B0
+    style MESSAGING_MOD fill:#FFEBEE,color:#000,stroke:#F44336
+    style IAM_MOD fill:#FFF3E0,color:#000,stroke:#FF9800
+    style COMPUTE_MOD fill:#E8F5E9,color:#000,stroke:#4CAF50
+    style MONITORING_MOD fill:#ECEFF1,color:#000,stroke:#607D8B
 ```
+
+---
+
+### 🔒 Security Flow
+
+```mermaid
+graph TB
+    subgraph CONTAINER_SECURITY["🛡️ Container Security"]
+        direction TB
+
+        subgraph PODMAN_HARDENING["🔒 Podman Hardening"]
+            NO_NEW_PRIV["🚫 no-new-privileges:true<br/>No privilege escalation"]
+            TMPFS["📁 tmpfs /tmp<br/>In-memory temporary<br/>filesystem"]
+            ROOTLESS["👤 Rootless<br/>No daemon, no root"]
+        end
+
+        subgraph DOCKER_SOCKET["⚠️ Docker Socket (Risk)"]
+            SOCK_REQ["🔌 Requirement: /var/run/docker.sock<br/>Needed for Lambda<br/>Docker-in-Docker"]
+            SOCK_WARN["⚠️ WARNING: Grants full<br/>daemon control<br/>NEVER in production"]
+            SOCK_ALT["🔄 Alternative: Disable<br/>FLOCI_SERVICES_LAMBDA_ENABLED<br/>= false"]
+        end
+    end
+
+    subgraph IAM_SECURITY["🔐 IAM Security"]
+        direction TB
+        LEAST_PRIV["🔑 Least-Privilege<br/>Only required permissions<br/>s3:GetObject, dynamodb:UpdateItem,<br/>sqs:SendMessage"]
+        ROLE_ARN["📋 Lambda Role<br/>Unique ARN per function<br/>No wildcard permissions"]
+        ESM_PERMISSIONS["📨 EventSourceMapping<br/>SQS-only permissions<br/>batch_size=10"]
+    end
+
+    subgraph CREDENTIAL_ISOLATION["🔑 Credential Isolation"]
+        direction TB
+        DUMMY_CREDS["🧪 Dummy Credentials<br/>AWS_ACCESS_KEY_ID=test<br/>AWS_SECRET_ACCESS_KEY=test"]
+        ENV_INJECTION["💉 Env Injection<br/>Per-container<br/>environment variables"]
+        NO_SECRETS["🚫 No Real Secrets<br/>Never commit keys<br/>.env in .gitignore"]
+    end
+
+    subgraph NETWORK_SECURITY["🌐 Network Security"]
+        direction TB
+        POC_NETWORK["🔗 poc-network<br/>Isolated Podman network<br/>No external exposure"]
+        PORT_EXPOSE["🔌 Exposed Ports<br/>Only: 4566, 4500,<br/>8000, 8080"]
+    end
+
+    CONTAINER_SECURITY --> IAM_SECURITY
+    IAM_SECURITY --> CREDENTIAL_ISOLATION
+    CREDENTIAL_ISOLATION --> NETWORK_SECURITY
+
+    style CONTAINER_SECURITY fill:#FFEBEE,color:#000,stroke:#F44336
+    style PODMAN_HARDENING fill:#E8F5E9,color:#000,stroke:#4CAF50
+    style DOCKER_SOCKET fill:#FFF3E0,color:#000,stroke:#FF9800
+    style IAM_SECURITY fill:#E3F2FD,color:#000,stroke:#2196F3
+    style CREDENTIAL_ISOLATION fill:#F3E5F5,color:#000,stroke:#9C27B0
+    style NETWORK_SECURITY fill:#E0F7FA,color:#000,stroke:#00BCD4
+    style NO_NEW_PRIV fill:#4CAF50,color:#fff,stroke:#2E7D32
+    style TMPFS fill:#4CAF50,color:#fff,stroke:#2E7D32
+    style ROOTLESS fill:#4CAF50,color:#fff,stroke:#2E7D32
+    style SOCK_REQ fill:#FF9800,color:#fff,stroke:#E65100
+    style SOCK_WARN fill:#F44336,color:#fff,stroke:#C62828
+    style SOCK_ALT fill:#FF9800,color:#fff,stroke:#E65100
+    style LEAST_PRIV fill:#2196F3,color:#fff,stroke:#1565C0
+    style ROLE_ARN fill:#2196F3,color:#fff,stroke:#1565C0
+    style ESM_PERMISSIONS fill:#2196F3,color:#fff,stroke:#1565C0
+    style DUMMY_CREDS fill:#9C27B0,color:#fff,stroke:#6A1B9A
+    style ENV_INJECTION fill:#9C27B0,color:#fff,stroke:#6A1B9A
+    style NO_SECRETS fill:#9C27B0,color:#fff,stroke:#6A1B9A
+    style POC_NETWORK fill:#00BCD4,color:#fff,stroke:#00838F
+    style PORT_EXPOSE fill:#00BCD4,color:#fff,stroke:#00838F
+```
+
+---
 
 ### 🐳 Container Topology
 
 ```mermaid
 graph TB
-    subgraph "🐳 Podman Compose Services"
-        FLOCI["🔵 floci<br/>floci/floci:1.5.11<br/>Port: 4566<br/>Memory: 1G"]
-        FLOCI_UI["🖥️ floci-ui<br/>floci/floci-ui:1.5.11<br/>Port: 4500<br/>Memory: 256M"]
-        TF["🏗️ terraform<br/>Custom Container<br/>Memory: 256M"]
-        BE["⚡ backend<br/>FastAPI (test stage)<br/>Port: 8000<br/>Memory: 512M"]
-        LW["🔄 lambda-worker<br/>Polling (worker profile)<br/>Port: 8080<br/>Memory: 256M"]
-        INT["🧪 integration<br/>Test Runner<br/>Memory: 256M"]
-        E2E["🎯 e2e<br/>E2E Runner<br/>Memory: 256M"]
+    subgraph PODMAN["🐳 Podman Compose Services"]
+        direction TB
+
+        subgraph INFRA_GROUP["🔵 Infrastructure Group"]
+            FLOCI["🔵 floci<br/>floci/floci:1.5.11<br/>Port: 4566<br/>Memory: 1G | CPU: 1.0<br/>Health: curl http://localhost:4566"]
+            FLOCI_UI["🖥️ floci-ui<br/>floci/floci-ui:latest<br/>Port: 4500<br/>Memory: 256M | CPU: 0.25"]
+            TF["🏗️ terraform<br/>Custom Container<br/>Memory: 256M | CPU: 0.25<br/>Volume: terraform-workdir"]
+        end
+
+        subgraph APP_GROUP["🟢 Application Group"]
+            BE["⚡ backend<br/>FastAPI (test stage)<br/>Port: 8000<br/>Memory: 512M | CPU: 0.5<br/>Health: /ready endpoint"]
+            LW["🔄 lambda-worker<br/>Polling (worker profile)<br/>Port: 8080<br/>Memory: 256M | CPU: 0.25<br/>Health: /health endpoint"]
+        end
+
+        subgraph TEST_GROUP["🧪 Testing Group"]
+            BE_TEST["🧪 backend-test<br/>pytest --cov-fail-under=98<br/>Memory: 256M | CPU: 0.25"]
+            LW_TEST["🧪 lambda-worker-test<br/>pytest --cov-fail-under=98<br/>Memory: 256M | CPU: 0.25"]
+            INT["🔗 integration<br/>Test Runner<br/>Memory: 256M | CPU: 0.25"]
+            E2E["🎯 e2e<br/>E2E Runner<br/>Memory: 256M | CPU: 0.25"]
+        end
     end
 
-    FLOCI_UI -->|depends_on| FLOCI
-    BE -->|depends_on| FLOCI
-    LW -->|depends_on| FLOCI
-    INT -->|depends_on| FLOCI
-    E2E -->|depends_on| BE
+    FLOCI_UI -->|"depends_on: healthy"| FLOCI
+    BE -->|"depends_on: healthy"| FLOCI
+    LW -->|"depends_on: healthy"| FLOCI
+    INT -->|"depends_on: healthy"| FLOCI
+    E2E -->|"depends_on: healthy"| BE
 
+    subgraph PROFILES["📋 Compose Profiles"]
+        DEFAULT["🟢 Default Profile<br/>floci + terraform<br/>+ backend + floci-ui"]
+        WORKER["🟠 Worker Profile<br/>lambda-worker<br/>(only when Floci Lambda<br/>unavailable)"]
+    end
+
+    subgraph SECURITY_OPTS["🔒 Security Options"]
+        SEC_NO_NEW["no-new-privileges:true<br/>✅ backend<br/>✅ lambda-worker"]
+        SEC_TMPFS["tmpfs /tmp<br/>✅ backend<br/>✅ lambda-worker"]
+        SEC_LIMITS["Resource Limits<br/>✅ All services<br/>memory + CPU defined"]
+    end
+
+    FLOCI -.->|"required for<br/>Lambda simulation"| FLOCI
+
+    style PODMAN fill:#E8EAF6,color:#000,stroke:#3F51B5
+    style INFRA_GROUP fill:#E3F2FD,color:#000,stroke:#2196F3
+    style APP_GROUP fill:#E8F5E9,color:#000,stroke:#4CAF50
+    style TEST_GROUP fill:#FFF3E0,color:#000,stroke:#FF9800
+    style PROFILES fill:#F3E5F5,color:#000,stroke:#9C27B0
+    style SECURITY_OPTS fill:#FFEBEE,color:#000,stroke:#F44336
     style FLOCI fill:#2196F3,color:#fff,stroke:#1565C0
     style BE fill:#4CAF50,color:#fff,stroke:#2E7D32
     style LW fill:#FF9800,color:#fff,stroke:#E65100
     style E2E fill:#E91E63,color:#fff,stroke:#AD1457
     style INT fill:#9C27B0,color:#fff,stroke:#6A1B9A
+    style BE_TEST fill:#E91E63,color:#fff,stroke:#AD1457
+    style LW_TEST fill:#E91E63,color:#fff,stroke:#AD1457
+    style FLOCI_UI fill:#2196F3,color:#fff,stroke:#1565C0
+    style TF fill:#2196F3,color:#fff,stroke:#1565C0
+    style DEFAULT fill:#4CAF50,color:#fff,stroke:#2E7D32
+    style WORKER fill:#FF9800,color:#fff,stroke:#E65100
+    style SEC_NO_NEW fill:#4CAF50,color:#fff,stroke:#2E7D32
+    style SEC_TMPFS fill:#4CAF50,color:#fff,stroke:#2E7D32
+    style SEC_LIMITS fill:#4CAF50,color:#fff,stroke:#2E7D32
 ```
 
 ---

@@ -239,8 +239,7 @@ namespace :backend do
   end
 
   task test: :build do
-    run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "--no-deps", "-T", BACKEND_SERVICE,
-                "pytest", "tests", "--cov=app", "--cov-report=term-missing", "--cov-fail-under=98")
+    run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "--no-deps", "-T", "backend-test")
   end
 end
 
@@ -250,8 +249,7 @@ namespace :worker do
   end
 
   task test: :build do
-    run_command("podman-compose", "-f", COMPOSE_FILE, "--profile", "worker", "run", "--rm", "--no-deps", "-T", WORKER_SERVICE,
-                "pytest", "tests", "--cov=handler", "--cov-report=term-missing", "--cov-fail-under=98")
+    run_command("podman-compose", "-f", COMPOSE_FILE, "--profile", "worker", "run", "--rm", "--no-deps", "-T", "lambda-worker-test")
   end
 end
 

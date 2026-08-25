@@ -58,8 +58,8 @@ def test_document_workflow_reaches_processed_status() -> None:
             break
         time.sleep(1)
     else:
-        pytest.skip(
-            f"Document {document_id} did not reach processed status. "
+        pytest.fail(
+            f"Document {document_id} did not reach processed status within 45s. "
             "Lambda ESM may not be functional (e.g. Podman without Docker socket)."
         )
 

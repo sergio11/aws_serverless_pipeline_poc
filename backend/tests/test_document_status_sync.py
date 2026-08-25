@@ -5,13 +5,12 @@ and lambda/handler.py. This module provides tests to catch drift.
 """
 import os
 import pytest
+from pathlib import Path
 from app.domain import DocumentStatus as BackendDocumentStatus
 
 
 def _find_lambda_handler_path():
     """Locate lambda/handler.py searching upward from the test file or via env var."""
-    from pathlib import Path
-
     env_path = os.environ.get("LAMBDA_HANDLER_PATH")
     if env_path:
         p = Path(env_path)
@@ -79,3 +78,16 @@ def test_document_status_values_are_lowercase() -> None:
         assert member.value == member.value.lower(), (
             f"DocumentStatus.{member.name} value '{member.value}' should be lowercase"
         )
+
+
+def test_lambda_handler_has_sync_comment() -> None:
+    """Verify lambda/handler.py contains the sync warning comment above DocumentStatus."""
+    lambda_handler_path = _find_lambda_handler_path()
+    if lambda_handler_path is None:
+        pytest.skip("lambda/handler.py not found (running inside container without lambda source)")
+    source = lambda_handler_path.read_text()
+
+    assert "CRITICAL: This enum MUST stay synchronized" in source, (
+        "lambda/handler.py is missing the sync warning comment above DocumentStatus. "
+        "Add a comment warning developers to update both files when modifying the enum."
+    )

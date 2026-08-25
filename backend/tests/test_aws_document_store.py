@@ -53,7 +53,15 @@ class FakeTable:
         return {"Item": item} if item else {}
 
     def delete_item(self, Key: dict[str, str], **kwargs) -> None:
-        self.items.pop(Key["id"], None)
+        condition = kwargs.get("ConditionExpression", "")
+        item_id = Key["id"]
+        if "attribute_exists(id)" in condition and item_id not in self.items:
+            raise ClientError(
+                {"Error": {"Code": "ConditionalCheckFailedException",
+                           "Message": "The conditional check failed"}},
+                "DeleteItem",
+            )
+        self.items.pop(item_id, None)
 
 
 class FakeDynamoClient:

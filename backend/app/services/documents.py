@@ -105,7 +105,12 @@ class DocumentService:
                 log_event(logging.ERROR, "create_document_failed",
                           document_id=document_id,
                           reason=str(exc),
-                          note="Document saved but SQS publish failed; no cleanup performed")
+                          note="SQS publish failed; attempting cleanup of saved document")
+                try:
+                    self._store.delete(document.id)
+                except Exception:
+                    log_event(logging.WARNING, "cleanup_failed_after_sqss_failure",
+                              document_id=document_id)
             else:
                 log_event(logging.ERROR, "create_document_failed",
                           document_id=document_id, reason=str(exc))

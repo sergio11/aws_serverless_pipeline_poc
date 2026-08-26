@@ -8,10 +8,6 @@
 
 A **local-first AWS learning lab** that replicates the complete AWS development lifecycle — from infrastructure provisioning to asynchronous event-driven processing.
 
-```text
-develop → containerize → provision → run → test → observe → destroy → rebuild
-```
-
 This POC demonstrates production-grade AWS patterns: **Infrastructure as Code**, **event-driven architecture**, **distributed locking**, **idempotent processing**, and **observability** — all running locally with Floci as the AWS emulator.
 
 ---

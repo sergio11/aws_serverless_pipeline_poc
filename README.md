@@ -895,7 +895,8 @@ rake logs
 ├── lambda/                           # Lambda function / polling worker
 │   ├── Containerfile                 # Multi-stage container build
 │   ├── handler.py                    # Dual-purpose: Lambda + SQS worker
-│   └── tests/                        # Worker unit tests (98%+ coverage)
+│   ├── reconciler.py                 # Document reconciler (orphan recovery)
+│   └── tests/                        # Worker + reconciler unit tests (98%+ coverage)
 │
 ├── terraform/                        # Infrastructure as Code
 │   ├── main.tf                       # Root module composition
@@ -925,11 +926,7 @@ rake logs
 │       └── tests/
 │           └── test_document_workflow.py
 │
-├── scripts/
-│   ├── package-lambda.sh             # Packages Lambda into deployment ZIP
-│   └── reconcile_orphan_documents.py # Orphan document recovery tool
-│
-├── compose.yaml                      # Podman Compose services (7 services)
+├── compose.yaml                      # Podman Compose services (8 services)
 ├── Rakefile                          # Task automation (278 lines)
 ├── .env.example                      # Environment variable template
 ├── .gitignore                        # Git ignore rules
@@ -954,9 +951,11 @@ rake logs
 
 | Command | Description |
 |---------|-------------|
-| `rake up` | Start everything (Floci + Infra + Backend + UI) |
+| `rake up` | Start everything (Floci + Infra + Backend + Worker + Reconciler + UI) |
 | `rake down` | Stop and destroy all services |
 | `rake backend:start` | Start the FastAPI backend |
+| `rake worker:start` | Start the Lambda polling worker |
+| `rake reconciler:start` | Start the document reconciler worker |
 | `rake ui:start` | Start the Floci UI console |
 
 ### 🧪 Testing
@@ -964,11 +963,12 @@ rake logs
 | Command | Description |
 |---------|-------------|
 | `rake test` | Run all tests (unit + integration + e2e) |
-| `rake test:unit` | Run backend + worker unit tests |
+| `rake test:unit` | Run backend + worker + reconciler unit tests |
 | `rake test:integration` | Run integration tests against Floci |
 | `rake test:e2e` | Run end-to-end workflow tests |
 | `rake backend:test` | Run backend unit tests (98%+ coverage) |
 | `rake worker:test` | Run worker unit tests (98%+ coverage) |
+| `rake reconciler:test` | Run reconciler unit tests (98%+ coverage) |
 | `rake integration:test` | Run integration tests |
 | `rake e2e:test` | Run E2E tests |
 

@@ -12,7 +12,7 @@ from enum import StrEnum
 from typing import Any
 
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, EndpointConnectionError
 
 # SYNC: The log_event function below is duplicated in backend/app/logging.py
 # Changes to log format must be applied to both files.
@@ -154,7 +154,7 @@ class DocumentProcessor:
             self._release_processing_lock(document_id)
 
     def _acquire_processing_lock(self, document_id: str) -> bool:
-        """Intenta adquirir lock de procesamiento de forma atómica."""
+        """Attempts to atomically acquire a processing lock."""
         item = self._get_document(document_id)
         if item is not None:
             existing_owner = item.get("processing_owner")
@@ -190,7 +190,7 @@ class DocumentProcessor:
             raise
 
     def _release_processing_lock(self, document_id: str) -> None:
-        """Libera el lock de procesamiento solo si es el owner actual."""
+        """Releases the processing lock only if the current owner."""
         try:
             self._table.update_item(
                 Key={"id": document_id},
@@ -398,6 +398,33 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     return response
 
 
+def _wait_for_endpoint(settings: WorkerSettings, retries: int = 30, delay: float = 2) -> None:  # pragma: no cover
+    config = {
+        "endpoint_url": settings.aws_endpoint_url,
+        "region_name": settings.aws_region,
+        "aws_access_key_id": settings.aws_access_key_id,
+        "aws_secret_access_key": settings.aws_secret_access_key,
+    }
+    sqs = boto3.client("sqs", **config)
+    for attempt in range(1, retries + 1):
+        try:
+            sqs.get_queue_url(QueueName=settings.sqs_queue_name)
+            log_event(logging.INFO, "endpoint_ready", attempt=attempt)
+            return
+        except EndpointConnectionError:
+            log_event(logging.INFO, "waiting_for_endpoint", attempt=attempt, retries=retries)
+            time.sleep(delay)
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] in {
+                "AWS.SimpleQueueService.NonExistentQueue",
+                "QueueDoesNotExist",
+            }:
+                log_event(logging.INFO, "endpoint_ready", attempt=attempt)
+                return
+            raise
+    log_event(logging.WARNING, "endpoint_not_ready_after_retries", retries=retries)
+
+
 def main() -> None:  # pragma: no cover
     parser = argparse.ArgumentParser()
     group = parser.add_mutually_exclusive_group(required=True)
@@ -421,6 +448,9 @@ def main() -> None:  # pragma: no cover
         return
 
     settings = WorkerSettings.from_environment()
+
+    _wait_for_endpoint(settings)
+
     worker = build_worker(settings)
 
     if args.once:

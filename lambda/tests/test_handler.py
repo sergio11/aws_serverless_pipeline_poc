@@ -659,6 +659,26 @@ def test_force_release_expired_lock_tolerates_client_error() -> None:
     failing_table.update_item.assert_called_once()
 
 
+def test_force_release_expired_lock_returns_silently_on_conditional_check_failure() -> None:
+    """When lock was already removed by another worker, returns silently."""
+    from unittest.mock import MagicMock
+
+    failing_table = MagicMock()
+    failing_table.update_item.side_effect = ClientError(
+        {"Error": {"Code": "ConditionalCheckFailedException", "Message": "lock already released"}},
+        "UpdateItem",
+    )
+
+    dynamodb_resource = MagicMock()
+    dynamodb_resource.Table.return_value = failing_table
+
+    processor = DocumentProcessor(FakeS3Client(), dynamodb_resource, "documents")
+
+    processor._force_release_expired_lock("doc-1")
+
+    failing_table.update_item.assert_called_once()
+
+
 def test_processor_uses_consistent_owner_identifier() -> None:
     """Verify that lock acquire and release use the same owner identifier."""
     import os

@@ -13,6 +13,7 @@ htmlcov/
 
 .venv/
 venv/
+lambda/vendor/
 
 .terraform/
 *.tfstate

@@ -248,8 +248,26 @@ namespace :worker do
     run_command("podman-compose", "-f", COMPOSE_FILE, "--profile", "worker", "build", WORKER_SERVICE)
   end
 
+  task :start do
+    run_command("podman-compose", "-f", COMPOSE_FILE, "--profile", "worker", "up", "-d", WORKER_SERVICE)
+  end
+
   task test: :build do
     run_command("podman-compose", "-f", COMPOSE_FILE, "--profile", "worker", "run", "--rm", "--no-deps", "-T", "lambda-worker-test")
+  end
+end
+
+namespace :reconciler do
+  task :build do
+    run_command("podman-compose", "-f", COMPOSE_FILE, "build", "reconciler-worker")
+  end
+
+  task :start do
+    run_command("podman-compose", "-f", COMPOSE_FILE, "up", "-d", "reconciler-worker")
+  end
+
+  task test: :build do
+    run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "--no-deps", "-T", "reconciler-test")
   end
 end
 
@@ -280,7 +298,7 @@ namespace :ui do
 end
 
 namespace :test do
-  task unit: ["backend:test", "worker:test"]
+  task unit: ["backend:test", "worker:test", "reconciler:test"]
   task integration: "integration:test"
   task e2e: "e2e:test"
   task all: [:unit, :e2e]
@@ -288,7 +306,7 @@ end
 
 namespace :services do
   task :logs do
-    [FLOCI_CONTAINER, BACKEND_CONTAINER, WORKER_CONTAINER, UI_CONTAINER].each do |container|
+    [FLOCI_CONTAINER, BACKEND_CONTAINER, WORKER_CONTAINER, "poc-reconciler-worker", UI_CONTAINER].each do |container|
       puts "--- #{container} ---"
       system("podman", "logs", "--tail", "50", container)
       puts
@@ -316,8 +334,8 @@ namespace :doctor do
   end
 end
 
-desc "Start local environment (Floci + Infra + Backend + UI)"
-task up: ["infra:deploy", "backend:start", "ui:start"]
+desc "Start local environment (Floci + Infra + Backend + Worker + Reconciler + UI)"
+task up: ["infra:deploy", "backend:start", "worker:start", "reconciler:start", "ui:start"]
 
 desc "Stop and destroy all services"
 task down: ["floci:stop", "floci:clean_data", "floci:start", "infra:destroy", "floci:stop"]

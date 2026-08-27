@@ -8,8 +8,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
-          cpus: "1.0"
+          memory: 2G
+          cpus: "2.0"
     logging:
       driver: json-file
       options:
@@ -376,6 +376,8 @@ services:
       DYNAMODB_TABLE: ${DYNAMODB_TABLE:-documents-metadata}
       SQS_QUEUE_NAME: ${SQS_QUEUE_NAME:-document-events}
       SQS_DLQ_NAME: ${SQS_DLQ_NAME:-document-events-dlq}
+    volumes:
+      - ./lambda/reconciler.py:/app/lambda/reconciler.py:ro
     depends_on:
       backend:
         condition: service_healthy

@@ -195,18 +195,26 @@ namespace :infra do
     outputs = terraform_output_json
     queue_url = outputs.dig('sqs_queue_url', 'value') || ''
     queue_name = queue_url.split('/').last || ''
+    dlq_url = outputs.dig('sqs_dlq_url', 'value') || ''
+    dlq_name = dlq_url.split('/').last || ''
     env_content = [
       "S3_BUCKET=#{outputs.dig('s3_bucket', 'value') || ''}",
       "DYNAMODB_TABLE=#{outputs.dig('dynamodb_table', 'value') || ''}",
       "SQS_QUEUE_URL=#{queue_url}",
       "SQS_QUEUE_NAME=#{queue_name}",
-      "SQS_DLQ_URL=#{outputs.dig('sqs_dlq_url', 'value') || ''}",
+      "SQS_DLQ_URL=#{dlq_url}",
+      "SQS_DLQ_NAME=#{dlq_name}",
     ].join("\n") + "\n"
     File.write(".env", env_content)
     puts "Generated .env from Terraform outputs"
   end
 
-  task deploy: ["floci:start", :package_lambda, :init, :apply, :env]
+  task :prepull_lambda_runtime do
+    puts "Pre-pulling Lambda runtime image..."
+    run_command("podman", "pull", "public.ecr.aws/lambda/python:3.13")
+  end
+
+  task deploy: ["floci:start", :package_lambda, :prepull_lambda_runtime, :init, :apply, :env]
 
   task :destroy do
     run_terraform("destroy", "-auto-approve", "-lock=false", "-var-file", TERRAFORM_VAR_FILE)
@@ -286,7 +294,7 @@ namespace :e2e do
     run_command("podman-compose", "-f", COMPOSE_FILE, "build", E2E_SERVICE)
   end
 
-  task test: ["infra:deploy", "backend:start", :build] do
+  task test: ["backend:start", "worker:start", :build] do
     run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "--no-deps", "-T", E2E_SERVICE, "pytest", "tests", "-v")
   end
 end
@@ -338,7 +346,7 @@ desc "Start local environment (Floci + Infra + Backend + Worker + Reconciler + U
 task up: ["infra:deploy", "backend:start", "worker:start", "reconciler:start", "ui:start"]
 
 desc "Stop and destroy all services"
-task down: ["floci:stop", "floci:clean_data", "floci:start", "infra:destroy", "floci:stop"]
+task down: ["floci:stop", "floci:start", "infra:destroy", "floci:clean_data", "floci:stop"]
 
 desc "Run all tests (unit, e2e)"
 task test: "test:all"

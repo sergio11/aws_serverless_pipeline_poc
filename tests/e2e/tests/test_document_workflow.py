@@ -1,6 +1,8 @@
 import json
 import os
+import sys
 import time
+from datetime import UTC, datetime, timedelta
 from ulid import ULID
 
 import boto3
@@ -24,6 +26,27 @@ def _aws_config():
         "aws_access_key_id": "test",
         "aws_secret_access_key": "test",
     }
+
+
+def _drain_queue(sqs_client, queue_name):
+    try:
+        url = sqs_client.get_queue_url(QueueName=queue_name)["QueueUrl"]
+        while True:
+            response = sqs_client.receive_message(QueueUrl=url, MaxNumberOfMessages=10, WaitTimeSeconds=2)
+            messages = response.get("Messages", [])
+            if not messages:
+                break
+            for msg in messages:
+                sqs_client.delete_message(QueueUrl=url, ReceiptHandle=msg["ReceiptHandle"])
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _clean_sqs():
+    sqs = boto3.client("sqs", **_aws_config())
+    _drain_queue(sqs, SQS_QUEUE_NAME)
+    _drain_queue(sqs, SQS_DLQ_NAME)
 
 
 def test_document_workflow_reaches_processed_status() -> None:

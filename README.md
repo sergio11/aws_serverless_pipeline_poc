@@ -6,11 +6,7 @@
 [![Podman](https://img.shields.io/badge/Podman-5.x-892CA0?style=for-the-badge&logo=podman&logoColor=white)](https://podman.io/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
 
-A **local-first AWS learning lab** that replicates the complete AWS development lifecycle — from infrastructure provisioning to asynchronous event-driven processing — without requiring a real AWS account or incurring any cloud costs.
-
-```text
-develop → containerize → provision → run → test → observe → destroy → rebuild
-```
+A **local-first AWS learning lab** that replicates the complete AWS development lifecycle — from infrastructure provisioning to asynchronous event-driven processing.
 
 This POC demonstrates production-grade AWS patterns: **Infrastructure as Code**, **event-driven architecture**, **distributed locking**, **idempotent processing**, and **observability** — all running locally with Floci as the AWS emulator.
 

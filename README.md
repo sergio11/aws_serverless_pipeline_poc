@@ -15,7 +15,8 @@ Built with Python, FastAPI, Terraform, and Podman, this project demonstrates tha
 | Pattern | Implementation |
 |---------|---------------|
 | **Infrastructure as Code** | 6 modular Terraform modules with explicit dependency chains and idempotent provisioning |
-| **Event-Driven Architecture** | SQS + Lambda with Dead Letter Queue for poison pill isolation, resilient retries, and `ReportBatchItemFailures` for partial batch failure handling |
+| **Event-Driven Architecture** | SQS + Lambda (Document Processor) with DLQ, resilient retries, and `ReportBatchItemFailures` for partial batch failure handling |
+| **Scheduled Reconciliation** | EventBridge-scheduled Lambda (Reconciler) recovers orphan documents stuck in CREATED/PROCESSING state, ensuring eventual consistency |
 | **Distributed Locking** | DynamoDB conditional writes with owner-based release and expired lock detection |
 | **Idempotent Processing** | Worker verifies document status before processing, preventing double execution |
 | **Observability** | CloudWatch dashboard with 4 metric alarms and SNS notifications |
@@ -34,6 +35,8 @@ This POC is designed to demonstrate and validate cloud-grade architecture patter
 - 🏗️ **Infrastructure as Code (Modular Terraform)** — Declarative and idempotent provisioning of the entire infrastructure through 6 independent modules (storage, database, messaging, compute, iam, monitoring) with clean interfaces and explicit dependency chains.
 
 - ⚡ **Event-Driven Architecture (SQS + Lambda)** — Decoupled asynchronous communication between the REST API and the distributed processor, utilizing Dead Letter Queue (DLQ) for poison pill isolation and resilient retries.
+
+- 🔄 **Scheduled Reconciliation (EventBridge + Lambda)** — A secondary Lambda (`reconciler`) runs on a CloudWatch EventBridge schedule, scanning for documents stuck in `CREATED` or `PROCESSING` state for over 10 minutes. It resets processing locks and requeues stale documents, ensuring eventual consistency without manual intervention.
 
 - 🔒 **Distributed Locking (DynamoDB Conditional Writes)** — Atomic distributed locking via `ConditionExpression` in DynamoDB, preventing race conditions between workers with expired lock detection and owner-based release.
 
@@ -116,12 +119,13 @@ The implementation in `documents.py:88` is trivial: `document_id = str(ULID())`.
 | **Production-grade patterns** | IaC with Terraform, event-driven architecture, DLQ with `maxReceiveCount` and `ReportBatchItemFailures`, distributed locking, and idempotent processing — all patterns used in real production systems. |
 | **Modular Terraform** | 6 independent modules (`storage`, `database`, `messaging`, `compute`, `iam`, `monitoring`) with clean interfaces. Each module is reusable across projects. |
 | **Layered architecture** | Clean separation: Routes (HTTP) → DocumentService (logic) → DocumentStore (Protocol). Protocol-based dependency injection enables complete testing without AWS. |
-| **Dual-purpose Lambda** | The same `handler.py` works as both a Lambda function AND a polling worker — demonstrating serverless and long-polling patterns in a single file. |
+| **Dual Lambda architecture** | Document Processor (SQS-triggered) + Reconciler (EventBridge-scheduled) — demonstrating event-driven processing with automatic orphan recovery. |
+| **Reconciliation pattern** | Scheduled Lambda recovers orphan documents stuck in CREATED/PROCESSING state, ensuring eventual consistency without manual intervention. |
 | **Distributed locking** | DynamoDB conditional writes with `ConditionExpression` prevent worker races. Locks expire at 300s and release is owner-verified. |
 | **Idempotent processing** | Already-processed documents are gracefully skipped. DynamoDB conditional writes prevent double processing. |
 | **Observability** | CloudWatch dashboard with 4 alarms (DLQ, Lambda errors, throttles, SQS depth), SNS notifications, and structured JSON logging across all services. |
 | **Security hardening** | Rootless Podman, `no-new-privileges:true`, `tmpfs /tmp`, credential isolation, and KMS encryption on SQS. |
-| **Comprehensive testing** | Unit tests with 98%+ coverage on backend and worker, integration tests against Floci, and E2E validating the complete `CREATED → PROCESSING → PROCESSED` flow. |
+| **Comprehensive testing** | Unit tests with 98%+ coverage on backend, document processor, and reconciler. Integration tests against Floci, and E2E validating the complete `CREATED → PROCESSING → PROCESSED` flow. |
 | **Reproducible automation** | Rake as the single entry point for development, testing, and deployment. `rake up` brings up the entire stack with one command. |
 
 ### ⚠️ Weaknesses / Tradeoffs
@@ -130,6 +134,7 @@ The implementation in `documents.py:88` is trivial: `document_id = str(ULID())`.
 |--------|--------|
 | **Local emulator fidelity** | Floci doesn't replicate AWS service limits, IAM policies, VPC networking, or eventual consistency behaviors. DLQ redrive timing depends on `visibility_timeout_seconds` (330s), which may differ from real AWS enforcement. Tests may pass locally but fail on real AWS. |
 | **No real Lambda cold starts** | Lambda execution in Floci uses Docker-in-Docker, which doesn't simulate real cold start latency or Lambda service concurrency limits. |
+| **No EventBridge emulator** | Reconciler schedule works on real AWS but Floci may not emulate EventBridge rules. Manual testing via `--once` flag required locally. |
 | **Single-region only** | The architecture assumes a single AWS region. Cross-region replication and multi-region failover are not addressed. |
 | **No TLS termination** | The backend serves plain HTTP. A production deployment would require a reverse proxy (nginx) or ALB for TLS. |
 | **Stateful Terraform** | State is stored in a Podman volume (`terraform-workdir`). Production should use S3 + DynamoDB for remote state with locking. |
@@ -163,15 +168,15 @@ This separation follows the **Dependency Inversion Principle** — high-level mo
 
 ---
 
-### ⚡ Dual-Purpose Lambda Handler
+### ⚡ Dual Lambda Architecture
 
-The `lambda/handler.py` file serves two simultaneous roles:
+The `lambda/` directory contains two distinct Lambda functions serving complementary roles:
 
-1. **Lambda Function** — `lambda_handler(event, context)` processes SQS record batches with `ReportBatchItemFailures` support. Failed SQS messages (including `DocumentNotFoundError` for non-existent documents) are returned to the queue for retry, and successful ones are deleted. After `maxReceiveCount` failures, SQS moves the message to the DLQ. The processor is initialized once at module level (`_lambda_processor`) to reuse connections on *warm starts*.
+1. **Document Processor** (`handler.py`) — Processes SQS `DocumentCreated` events with `ReportBatchItemFailures` support. Implements distributed locking via DynamoDB conditional writes, idempotent processing (skips already-processed documents), and status transitions (CREATED → PROCESSING → PROCESSED). Can also run as a polling worker via `SqsWorker` class with `--poll` or `--once` flags. The processor is initialized once at module level (`_lambda_processor`) to reuse connections on *warm starts*.
 
-2. **Polling Worker** — `SqsWorker` runs a continuous polling loop with `receive_message`, a health check server on port 8080, and graceful shutdown via SIGTERM/SIGINT signals. Activatable with `--poll` or `--once`.
+2. **Reconciler** (`reconciler.py`) — Scheduled Lambda triggered by CloudWatch EventBridge (every 10 minutes). Scans DynamoDB for documents stuck in `CREATED` or `PROCESSING` state for over 10 minutes, resets stale processing locks, and requeues documents for reprocessing via SQS. Ensures eventual consistency without manual intervention. Can also run as a standalone worker via `--poll` or `--once` flags.
 
-This design demonstrates that the same processing logic can run in both serverless and long-polling contexts — a common pattern in hybrid architectures where a fallback is needed when Floci Lambda is unavailable. The `DocumentProcessor` class is shared between both modes, eliminating business logic duplication.
+Both functions share the same container image and DynamoDB table, but serve different purposes: the Document Processor handles the happy path (event-driven), while the Reconciler handles failure recovery (scheduled reconciliation).
 
 ---
 
@@ -197,12 +202,12 @@ Additionally, expired lock detection (`MAX_LOCK_AGE_SECONDS = 300`) is implement
 
 ### 📦 Container Topology and Ephemeral Test Execution
 
-The `compose.yaml` is streamlined to contain only the **5 core runtime services**:
+The `compose.yaml` is streamlined to contain only the **4 core runtime services**:
 
-- **Core Runtime Services**: `floci`, `floci-ui`, `terraform`, `backend`, and `reconciler-worker`.
+- **Core Runtime Services**: `floci`, `floci-ui`, `terraform`, and `backend`.
 - **Ephemeral Test Execution**: All unit, integration, and E2E tests run on demand in isolated, disposable containers (`podman run --rm`) managed via `Rakefile`.
 
-This decoupled design avoids container name collisions, keeps `compose.yaml` maintainable (~130 lines), and ensures tests run in clean, anonymous environments.
+This decoupled design avoids container name collisions, keeps `compose.yaml` maintainable (~150 lines), and ensures tests run in clean, anonymous environments.
 
 ---
 
@@ -211,11 +216,11 @@ This decoupled design avoids container name collisions, keeps `compose.yaml` mai
 The `terraform/main.tf` composes 6 modules with explicit dependency chains:
 
 ```text
-storage + database + messaging → iam → compute
-messaging + lambda → monitoring
+storage + database + messaging → iam → compute (Document Processor + Reconciler)
+messaging + compute → monitoring
 ```
 
-The three base modules (`storage`, `database`, `messaging`) are instantiated first without dependencies between them. The `iam` module receives the resulting ARNs (`bucket_arn`, `table_arn`, `queue_arn`) to create least-privilege policies. Only then can `compute` be deployed, as it needs the `role_arn` from IAM and the `queue_arn` from messaging for the event source mapping. `monitoring` depends on `messaging` (queue names) and `compute` (Lambda function name) to configure alarms and dashboard.
+The three base modules (`storage`, `database`, `messaging`) are instantiated first without dependencies between them. The `iam` module receives the resulting ARNs (`bucket_arn`, `table_arn`, `queue_arn`) to create least-privilege policies for both Lambda functions. The `compute` module provisions two Lambda functions: the Document Processor (SQS-triggered via EventSourceMapping) and the Reconciler (EventBridge-scheduled). `monitoring` depends on `messaging` (queue names) and `compute` (both Lambda function names) to configure alarms and dashboard.
 
 Each module exposes clean outputs (ARNs, names, URLs) that other modules consume. This modular composition means each concern is independently testable and reusable — the `storage` module for example, could be reused in any project needing an S3 bucket with versioning and lifecycle policies.
 
@@ -257,7 +262,8 @@ graph TB
 
     subgraph COMPUTE["🟠 Compute Layer"]
         direction TB
-        LAMBDA["λ Lambda<br/>Document Processor"]
+        LAMBDA_DOC["λ Document Processor<br/>SQS → DynamoDB + S3"]
+        LAMBDA_RECON["λ Reconciler<br/>EventBridge → DynamoDB + SQS"]
     end
 
     subgraph DOCKER["🐳 Docker-in-Docker Layer"]
@@ -270,6 +276,7 @@ graph TB
         DDB["🗄️ DynamoDB<br/>Metadata<br/>+ Lock"]
         SQS["📨 SQS<br/>Event<br/>Queue"]
         DLQ["💀 DLQ<br/>Dead Letter<br/>Queue"]
+        EB["⏰ EventBridge<br/>Scheduled Rule<br/>Reconciler Trigger"]
         CW["📊 CloudWatch<br/>Dashboard<br/>+ Alarms"]
         SNS["📢 SNS<br/>Alarm<br/>Notifications"]
     end
@@ -285,24 +292,30 @@ graph TB
     BACKEND -->|"PUT object"| S3
     BACKEND -->|"PutItem"| DDB
     BACKEND -->|"SendMessage"| SQS
-    SQS -->|"EventSourceMapping"| LAMBDA
+    SQS -->|"EventSourceMapping"| LAMBDA_DOC
     SQS -.->|"maxReceiveCount=3"| DLQ
-    LAMBDA -->|"GetObject"| S3
-    LAMBDA -->|"GetItem/UpdateItem"| DDB
+    LAMBDA_DOC -->|"GetObject"| S3
+    LAMBDA_DOC -->|"GetItem/UpdateItem"| DDB
+    EB -->|"Scheduled Invocation"| LAMBDA_RECON
+    LAMBDA_RECON -->|"Scan stale docs"| DDB
+    LAMBDA_RECON -->|"Requeue stale docs"| SQS
     WORKER -.->|"poll (fallback)"| SQS
-    LAMBDA -.->|"Docker-in-Docker"| DOCKER_SOCK
+    LAMBDA_DOC -.->|"Docker-in-Docker"| DOCKER_SOCK
     DOCKER_SOCK -.->|"executes"| FLOCI
     CW -->|"alarms"| SNS
     DLQ -->|"min messages"| CW
     FLOCI --> S3
     FLOCI --> DDB
     FLOCI --> SQS
-    FLOCI --> LAMBDA
+    FLOCI --> LAMBDA_DOC
+    FLOCI --> LAMBDA_RECON
     FLOCI_UI -->|"browses"| FLOCI
     TERRAFORM -->|"provisions"| S3
     TERRAFORM -->|"provisions"| DDB
     TERRAFORM -->|"provisions"| SQS
-    TERRAFORM -->|"provisions"| LAMBDA
+    TERRAFORM -->|"provisions"| LAMBDA_DOC
+    TERRAFORM -->|"provisions"| LAMBDA_RECON
+    TERRAFORM -->|"provisions"| EB
     TERRAFORM -->|"provisions"| CW
 
     style CLIENTE fill:#E8EAF6,color:#000,stroke:#3F51B5
@@ -313,12 +326,14 @@ graph TB
     style INFRAESTRUCTURA fill:#E3F2FD,color:#000,stroke:#2196F3
     style FLOCI fill:#2196F3,color:#fff,stroke:#1565C0
     style BACKEND fill:#4CAF50,color:#fff,stroke:#2E7D32
-    style LAMBDA fill:#FF9800,color:#fff,stroke:#E65100
+    style LAMBDA_DOC fill:#FF9800,color:#fff,stroke:#E65100
+    style LAMBDA_RECON fill:#FF9800,color:#fff,stroke:#E65100
     style WORKER fill:#FF9800,color:#fff,stroke:#E65100
     style S3 fill:#00BCD4,color:#fff,stroke:#00838F
     style DDB fill:#9C27B0,color:#fff,stroke:#6A1B9A
     style SQS fill:#F44336,color:#fff,stroke:#C62828
     style DLQ fill:#795548,color:#fff,stroke:#4E342E
+    style EB fill:#607D8B,color:#fff,stroke:#37474F
     style CW fill:#607D8B,color:#fff,stroke:#37474F
     style SNS fill:#F44336,color:#fff,stroke:#C62828
     style TERRAFORM fill:#2196F3,color:#fff,stroke:#1565C0
@@ -399,6 +414,37 @@ sequenceDiagram
 
 ---
 
+### 🔄 Reconciliation Flow (Sequence Diagram)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant EB as ⏰ EventBridge
+    participant R as λ Reconciler
+    participant DDB as 🗄️ DynamoDB
+    participant SQS as 📨 SQS
+
+    rect rgb(227, 242, 253)
+        Note over EB,SQS: 🔄 Reconciliation Cycle (Scheduled)
+        EB->>R: Scheduled Invocation (every 10min)
+        R->>DDB: Scan (status=CREATED OR PROCESSING, created_at < 10min ago)
+        DDB-->>R: stale documents list
+
+        loop For each stale document
+            alt status=PROCESSING (stuck lock)
+                R->>DDB: UpdateItem (reset lock, status=CREATED)
+                DDB-->>R: OK
+            end
+            R->>SQS: SendMessage (DocumentCreated event)
+            SQS-->>R: OK
+        end
+
+        R-->>EB: Response {reconciled: N}
+    end
+```
+
+---
+
 ### 🏗️ Terraform Module Composition
 
 ```mermaid
@@ -423,11 +469,12 @@ graph TB
         end
 
         subgraph IAM_MOD["🔐 IAM Module"]
-            IAM_MOD_F["🔐 iam<br/>Lambda Role<br/>Least-Privilege<br/>Policies"]
+            IAM_MOD_F["🔐 iam<br/>Lambda Roles<br/>Least-Privilege<br/>Policies"]
         end
 
         subgraph COMPUTE_MOD["⚡ Compute Module"]
-            LAMBDA_MOD["⚡ compute<br/>Lambda Function<br/>+ EventSource<br/>Mapping"]
+            LAMBDA_DOC_MOD["⚡ compute<br/>Document Processor Lambda<br/>+ SQS EventSource Mapping"]
+            LAMBDA_RECON_MOD["🔄 compute<br/>Reconciler Lambda<br/>+ EventBridge Schedule"]
         end
 
         subgraph MONITORING_MOD["📊 Monitoring Module"]
@@ -439,23 +486,28 @@ graph TB
     MAIN --> DDB_MOD
     MAIN --> SQS_MOD
     MAIN --> IAM_MOD_F
-    MAIN --> LAMBDA_MOD
+    MAIN --> LAMBDA_DOC_MOD
+    MAIN --> LAMBDA_RECON_MOD
     MAIN --> CW_MOD
 
     S3_MOD -.->|"bucket_arn"| IAM_MOD_F
     DDB_MOD -.->|"table_arn"| IAM_MOD_F
     SQS_MOD -.->|"queue_arn"| IAM_MOD_F
-    SQS_MOD -.->|"queue_arn"| LAMBDA_MOD
-    IAM_MOD_F -.->|"role_arn"| LAMBDA_MOD
+    SQS_MOD -.->|"queue_arn"| LAMBDA_DOC_MOD
+    IAM_MOD_F -.->|"role_arn"| LAMBDA_DOC_MOD
+    IAM_MOD_F -.->|"role_arn"| LAMBDA_RECON_MOD
     SQS_MOD -.->|"queue_name + dlq_name"| CW_MOD
-    LAMBDA_MOD -.->|"function_name"| CW_MOD
+    LAMBDA_DOC_MOD -.->|"function_name"| CW_MOD
+    LAMBDA_RECON_MOD -.->|"function_name"| CW_MOD
 
     subgraph DEPENDENCY_CHAIN["🔗 Dependency Chain"]
         direction LR
-        D1["storage + database<br/>+ messaging"] -.->|"ARNs"| D2["iam<br/>(role + policies)"]
-        D2 -.->|"role_arn"| D3["compute<br/>(Lambda + ESM)"]
-        D3 -.->|"function_name"| D4["monitoring<br/>(dashboard + alarms)"]
-        D5["messaging"] -.->|"queue_name"| D4
+        D1["storage + database<br/>+ messaging"] -.->|"ARNs"| D2["iam<br/>(roles + policies)"]
+        D2 -.->|"role_arn"| D3["compute<br/>(Document Processor + ESM)"]
+        D2 -.->|"role_arn"| D4["compute<br/>(Reconciler + EventBridge)"]
+        D3 -.->|"function_name"| D5["monitoring<br/>(dashboard + alarms)"]
+        D4 -.->|"function_name"| D5
+        D6["messaging"] -.->|"queue_name"| D5
     end
 
     style ROOT fill:#2196F3,color:#fff,stroke:#1565C0
@@ -465,7 +517,8 @@ graph TB
     style DDB_MOD fill:#9C27B0,color:#fff,stroke:#6A1B9A
     style SQS_MOD fill:#F44336,color:#fff,stroke:#C62828
     style IAM_MOD_F fill:#FF9800,color:#fff,stroke:#E65100
-    style LAMBDA_MOD fill:#4CAF50,color:#fff,stroke:#2E7D32
+    style LAMBDA_DOC_MOD fill:#4CAF50,color:#fff,stroke:#2E7D32
+    style LAMBDA_RECON_MOD fill:#FF9800,color:#fff,stroke:#E65100
     style CW_MOD fill:#607D8B,color:#fff,stroke:#37474F
     style STORAGE_MOD fill:#E0F7FA,color:#000,stroke:#00BCD4
     style DATABASE_MOD fill:#F3E5F5,color:#000,stroke:#9C27B0
@@ -499,8 +552,8 @@ graph TB
 
     subgraph IAM_SECURITY["🔐 IAM Security"]
         direction TB
-        LEAST_PRIV["🔑 Least-Privilege<br/>Only required permissions<br/>s3:GetObject, dynamodb:UpdateItem,<br/>sqs:SendMessage"]
-        ROLE_ARN["📋 Lambda Role<br/>Unique ARN per function<br/>No wildcard permissions"]
+        LEAST_PRIV["🔑 Least-Privilege<br/>Document Processor: s3:GetObject, dynamodb:UpdateItem, sqs:SendMessage<br/>Reconciler: dynamodb:Scan, dynamodb:UpdateItem, sqs:SendMessage<br/>EventBridge: lambda:InvokeFunction"]
+        ROLE_ARN["📋 Lambda Roles<br/>Unique ARN per function<br/>No wildcard permissions"]
         ESM_PERMISSIONS["📨 EventSourceMapping<br/>SQS-only permissions<br/>batch_size=10"]
     end
 
@@ -553,19 +606,19 @@ graph TB
         direction TB
 
         subgraph INFRA_GROUP["🔵 Infrastructure Group"]
-            FLOCI["🔵 floci<br/>floci/floci:1.5.11<br/>Port: 4566<br/>Memory: 1G | CPU: 1.0<br/>Health: curl http://localhost:4566"]
+            FLOCI["🔵 floci<br/>floci/floci:1.7.0<br/>Port: 4566<br/>Memory: 2G | CPU: 2.0<br/>Health: curl http://localhost:4566"]
             FLOCI_UI["🖥️ floci-ui<br/>floci/floci-ui:latest<br/>Port: 4500<br/>Memory: 256M | CPU: 0.25"]
             TF["🏗️ terraform<br/>Custom Container<br/>Memory: 256M | CPU: 0.25<br/>Volume: terraform-workdir"]
         end
 
         subgraph APP_GROUP["🟢 Application Group"]
             BE["⚡ backend<br/>FastAPI (test stage)<br/>Port: 8000<br/>Memory: 512M | CPU: 0.5<br/>Health: /ready endpoint"]
-            REC["🔄 reconciler-worker<br/>Document Reconciler<br/>Port: 8081<br/>Memory: 256M | CPU: 0.25"]
         end
 
         subgraph TEST_GROUP["🧪 Ephemeral Test Execution (podman run --rm)"]
             BE_TEST["🧪 backend unit tests"]
-            REC_TEST["🧪 reconciler unit tests"]
+            LAMBDA_TEST["🧪 document processor tests"]
+            REC_TEST["🧪 reconciler tests"]
             INT["🔗 integration tests"]
             E2E["🎯 e2e tests"]
         end
@@ -573,11 +626,10 @@ graph TB
 
     FLOCI_UI -->|"depends_on: healthy"| FLOCI
     BE -->|"depends_on: healthy"| FLOCI
-    REC -->|"depends_on: healthy"| FLOCI
 
     subgraph SECURITY_OPTS["🔒 Security Options"]
-        SEC_NO_NEW["no-new-privileges:true<br/>✅ backend<br/>✅ reconciler-worker"]
-        SEC_TMPFS["tmpfs /tmp<br/>✅ backend<br/>✅ reconciler-worker"]
+        SEC_NO_NEW["no-new-privileges:true<br/>✅ backend"]
+        SEC_TMPFS["tmpfs /tmp<br/>✅ backend"]
         SEC_LIMITS["Resource Limits<br/>✅ All services<br/>memory + CPU defined"]
     end
 
@@ -591,10 +643,10 @@ graph TB
     style E2E fill:#E91E63,color:#fff,stroke:#AD1457
     style INT fill:#9C27B0,color:#fff,stroke:#6A1B9A
     style BE_TEST fill:#E91E63,color:#fff,stroke:#AD1457
+    style LAMBDA_TEST fill:#E91E63,color:#fff,stroke:#AD1457
     style REC_TEST fill:#E91E63,color:#fff,stroke:#AD1457
     style FLOCI_UI fill:#2196F3,color:#fff,stroke:#1565C0
     style TF fill:#2196F3,color:#fff,stroke:#1565C0
-    style REC fill:#FF9800,color:#fff,stroke:#E65100
     style SEC_NO_NEW fill:#4CAF50,color:#fff,stroke:#2E7D32
     style SEC_TMPFS fill:#4CAF50,color:#fff,stroke:#2E7D32
     style SEC_LIMITS fill:#4CAF50,color:#fff,stroke:#2E7D32
@@ -624,6 +676,8 @@ graph TB
 | SQS Queue | `poc-local-document-events` | Async event publication |
 | SQS DLQ | `poc-local-document-events-dlq` | Dead letter queue (maxReceiveCount=3) |
 | Lambda | `poc-local-document-processor` | SQS-triggered async processor |
+| Lambda | `poc-local-document-reconciler` | Scheduled orphan document recovery (EventBridge trigger) |
+| EventBridge Rule | `poc-local-document-reconciler-rule` | Triggers reconciler Lambda on schedule |
 | CloudWatch Dashboard | `*-dashboard` | SQS depth, Lambda metrics, DLQ depth |
 | CloudWatch Alarms | 4 alarms | DLQ not empty, Lambda errors, throttles, SQS depth |
 
@@ -649,6 +703,22 @@ SQS → Lambda (async)
 
 On failure (missing doc, S3 error, lock contention):
   → Return batchItemFailures → SQS retries → DLQ after maxReceiveCount=3
+```
+
+### 🔄 Reconciliation Workflow
+
+```text
+EventBridge → Reconciler Lambda (every 10 minutes)
+  ├── 1. Scan DynamoDB (status=CREATED OR PROCESSING, created_at < 10min ago)
+  ├── 2. For each stale document:
+  │   ├── If status=PROCESSING → Reset lock + status=CREATED
+  │   └── SendMessage (DocumentCreated event) to SQS
+  └── 3. Return {reconciled: N}
+
+Purpose: Recover orphan documents stuck due to:
+  - Worker crash without lock release
+  - Lambda timeout during processing
+  - Network partition during DynamoDB update
 ```
 
 ### 🖥️ Local Console (Floci UI)

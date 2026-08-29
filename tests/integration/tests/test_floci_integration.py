@@ -133,8 +133,13 @@ class TestSQSIntegration:
 
         sqs.send_message(QueueUrl=queue_url, MessageBody=message_body)
 
-        response = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=1, WaitTimeSeconds=2)
-        messages = response.get("Messages", [])
+        messages = []
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and not messages:
+            response = sqs.receive_message(
+                QueueUrl=queue_url, MaxNumberOfMessages=1, WaitTimeSeconds=3
+            )
+            messages = response.get("Messages", [])
         assert len(messages) >= 1
 
         received_body = messages[0]["Body"]
@@ -159,8 +164,11 @@ class TestSQSIntegration:
                 MessageBody=json.dumps({"event_type": "DocumentCreated", "document_id": f"doc-{i}"}),
             )
 
-        response = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=10, WaitTimeSeconds=2)
-        messages = response.get("Messages", [])
+        messages = []
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and len(messages) < 3:
+            response = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=10, WaitTimeSeconds=3)
+            messages.extend(response.get("Messages", []))
         assert len(messages) >= 3
 
         for msg in messages:

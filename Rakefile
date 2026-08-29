@@ -337,7 +337,7 @@ namespace :integration do
     run_command("podman", "build", "-t", "aws-local-poc_integration", "./tests/integration")
   end
 
-  task test: ["infra:deploy", :build] do
+  task test: :build do
     env_args = File.exist?(".env") ? ["--env-file", ".env"] : []
     cmd = ["podman", "run", "--rm",
            "--network", "poc-network"] + env_args + [

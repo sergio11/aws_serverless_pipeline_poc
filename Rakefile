@@ -1,4 +1,6 @@
 require "fileutils"
+require "net/http"
+require "uri"
 
 COMPOSE_FILE = ENV.fetch("COMPOSE_FILE", "compose.yaml")
 FLOCI_ENDPOINT = ENV.fetch("FLOCI_ENDPOINT", "http://localhost:4566")
@@ -19,12 +21,43 @@ TERRAFORM_DIR = ENV.fetch("TERRAFORM_DIR", "terraform")
 TERRAFORM_VOLUME = ENV.fetch("TERRAFORM_VOLUME", "terraform-workdir")
 TERRAFORM_VAR_FILE = ENV.fetch("TERRAFORM_VAR_FILE", "environments/local/terraform.tfvars")
 ROOT_PATH = File.expand_path(".")
+# TCP port exposed by `podman system service` inside the Podman machine, used by
+# Floci to spawn Lambda containers. podman-compose on Windows translates Unix paths
+# to /mnt/c/... so socket mounts don't work; TCP is the only reliable alternative.
+PODMAN_TCP_PORT = ENV.fetch("PODMAN_TCP_PORT", "2376")
 
 def run_command(*args)
   command = args.join(" ")
   puts ">>> #{command}"
   success = system(*args)
   abort "FAILED: #{command}" unless success
+end
+
+def ensure_terraform_image
+  existing = `podman image inspect aws-local-poc_terraform 2>&1`
+  return if $?.success?
+  puts "Building Terraform container image..."
+  run_command("podman-compose", "-f", COMPOSE_FILE, "build", "terraform")
+end
+
+# Expose the Podman REST API over TCP inside the Podman machine so that the
+# Floci container can invoke Lambda containers via the Docker-compatible API.
+# podman-compose on Windows translates volume paths like /run/user/1000/... to
+# /mnt/c/run/user/1000/..., breaking Unix socket mounts. TCP is the workaround.
+def ensure_podman_tcp_service
+  port = PODMAN_TCP_PORT
+  puts "Ensuring Podman TCP service on port #{port} inside Podman machine..."
+  # Stop any previous instance listening on the same port
+  system("podman", "machine", "ssh",
+         "pkill -f 'podman system service.*#{port}' 2>/dev/null; true")
+  sleep 1
+  # Start podman system service in the background inside the Podman machine.
+  # nohup ensures the process outlives the SSH session.
+  ok = system("podman", "machine", "ssh",
+              "nohup podman system service --time=0 tcp:0.0.0.0:#{port} >/tmp/podman-tcp.log 2>&1 &")
+  abort "Failed to start Podman TCP service" unless ok
+  sleep 2
+  puts "Podman TCP service running on port #{port} (accessible via host.containers.internal:#{port})"
 end
 
 def ensure_terraform_volume
@@ -35,6 +68,7 @@ end
 
 def sync_terraform_to_volume
   ensure_terraform_volume
+  ensure_terraform_image
   host_path = File.expand_path(TERRAFORM_DIR)
   run_command(
     "podman", "run", "--rm",
@@ -96,11 +130,17 @@ end
 
 def wait_for_service(name, url, retries: 30, delay: 2)
   ready = false
+  uri = URI.parse(url)
   1.upto(retries) do |attempt|
-    if system("curl.exe", "-fsS", url, out: File::NULL, err: File::NULL)
-      puts "#{name} is ready at #{url}"
-      ready = true
-      break
+    begin
+      response = Net::HTTP.get_response(uri)
+      if response.is_a?(Net::HTTPSuccess) || response.is_a?(Net::HTTPRedirection)
+        puts "#{name} is ready at #{url}"
+        ready = true
+        break
+      end
+    rescue StandardError
+      # Not ready yet
     end
     puts "Waiting for #{name} at #{url} (#{attempt}/#{retries})"
     sleep delay
@@ -117,10 +157,16 @@ namespace :floci do
     wait_for_service("Floci", FLOCI_ENDPOINT)
   end
 
-  task start: [:up, :wait]
+  # Expose the Podman socket over TCP so Floci can spawn Lambda containers.
+  # Must run before :up so the FLOCI_DOCKER_DOCKER_HOST env var is satisfied.
+  task :ensure_podman_tcp do
+    ensure_podman_tcp_service
+  end
+
+  task start: [:ensure_podman_tcp, :up, :wait]
 
   task :stop do
-    run_command("podman-compose", "-f", COMPOSE_FILE, "stop")
+    run_command("podman-compose", "-f", COMPOSE_FILE, "down", "-t", "10")
   end
 
   task :down do
@@ -246,22 +292,16 @@ namespace :backend do
     wait_for_service("Backend", "#{BACKEND_ENDPOINT}/health")
   end
 
-  task test: :build do
-    run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "--no-deps", "-T", "backend-test")
-  end
-end
-
-namespace :worker do
-  task :build do
-    run_command("podman-compose", "-f", COMPOSE_FILE, "--profile", "worker", "build", WORKER_SERVICE)
+  task :build_test do
+    run_command("podman", "build", "-t", "aws-local-poc_backend:test", "--target", "test", "./backend")
   end
 
-  task :start do
-    run_command("podman-compose", "-f", COMPOSE_FILE, "--profile", "worker", "up", "-d", WORKER_SERVICE)
-  end
-
-  task test: :build do
-    run_command("podman-compose", "-f", COMPOSE_FILE, "--profile", "worker", "run", "--rm", "--no-deps", "-T", "lambda-worker-test")
+  task test: :build_test do
+    run_command("podman", "run", "--rm",
+                "--tmpfs", "/tmp",
+                "-v", "#{ROOT_PATH}/lambda/handler.py:/lambda/handler.py:ro",
+                "aws-local-poc_backend:test",
+                "pytest", "tests", "--cov=app", "--cov-report=term-missing", "--cov-fail-under=98")
   end
 end
 
@@ -274,28 +314,64 @@ namespace :reconciler do
     run_command("podman-compose", "-f", COMPOSE_FILE, "up", "-d", "reconciler-worker")
   end
 
-  task test: :build do
-    run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "--no-deps", "-T", "reconciler-test")
+  task :build_test do
+    run_command("podman", "build", "-t", "aws-local-poc_lambda:test", "--target", "test", "./lambda")
+  end
+
+  task test: :build_test do
+    run_command("podman", "run", "--rm",
+                "--tmpfs", "/tmp",
+                "aws-local-poc_lambda:test",
+                "pytest", "tests/test_reconciler.py", "--cov=reconciler", "--cov-report=term-missing", "--cov-fail-under=98")
+  end
+end
+
+namespace :lambda do
+  task :build_test do
+    run_command("podman", "build", "-t", "aws-local-poc_lambda:test", "--target", "test", "./lambda")
+  end
+
+  task test: :build_test do
+    run_command("podman", "run", "--rm",
+                "--tmpfs", "/tmp",
+                "aws-local-poc_lambda:test",
+                "pytest", "tests/test_handler.py", "--cov=handler", "--cov-report=term-missing", "--cov-fail-under=98")
   end
 end
 
 namespace :integration do
   task :build do
-    run_command("podman-compose", "-f", COMPOSE_FILE, "build", INTEGRATION_SERVICE)
+    run_command("podman", "build", "-t", "aws-local-poc_integration", "./tests/integration")
   end
 
-  task test: ["infra:deploy", :build] do
-    run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "--no-deps", "-T", INTEGRATION_SERVICE, "pytest", "tests")
+  task test: :build do
+    run_command("podman", "run", "--rm",
+                "--network", "poc-network",
+                "-e", "AWS_ENDPOINT_URL=http://floci:4566",
+                "-e", "AWS_DEFAULT_REGION=eu-west-1",
+                "-e", "AWS_ACCESS_KEY_ID=test",
+                "-e", "AWS_SECRET_ACCESS_KEY=test",
+                "aws-local-poc_integration", "pytest", "tests")
   end
 end
 
 namespace :e2e do
   task :build do
-    run_command("podman-compose", "-f", COMPOSE_FILE, "build", E2E_SERVICE)
+    run_command("podman", "build", "-t", "aws-local-poc_e2e", "./tests/e2e")
   end
 
-  task test: ["backend:start", "worker:start", :build] do
-    run_command("podman-compose", "-f", COMPOSE_FILE, "run", "--rm", "--no-deps", "-T", E2E_SERVICE, "pytest", "tests", "-v")
+  task test: ["backend:start", :build] do
+    env_args = File.exist?(".env") ? ["--env-file", ".env"] : []
+    cmd = ["podman", "run", "--rm",
+           "--network", "poc-network"] + env_args + [
+           "-e", "BACKEND_ENDPOINT=http://backend:8000",
+           "-e", "AWS_ENDPOINT_URL=http://floci:4566",
+           "-e", "AWS_DEFAULT_REGION=eu-west-1",
+           "-e", "AWS_ACCESS_KEY_ID=test",
+           "-e", "AWS_SECRET_ACCESS_KEY=test",
+           "-v", "#{ROOT_PATH}/lambda/reconciler.py:/app/lambda/reconciler.py:ro",
+           "aws-local-poc_e2e", "pytest", "tests", "-v"]
+    run_command(*cmd)
   end
 end
 
@@ -306,7 +382,7 @@ namespace :ui do
 end
 
 namespace :test do
-  task unit: ["backend:test", "worker:test", "reconciler:test"]
+  task unit: ["backend:test", "reconciler:test", "lambda:test"]
   task integration: "integration:test"
   task e2e: "e2e:test"
   task all: [:unit, :e2e]
@@ -314,7 +390,7 @@ end
 
 namespace :services do
   task :logs do
-    [FLOCI_CONTAINER, BACKEND_CONTAINER, WORKER_CONTAINER, "poc-reconciler-worker", UI_CONTAINER].each do |container|
+    [FLOCI_CONTAINER, BACKEND_CONTAINER, "poc-reconciler-worker", UI_CONTAINER].each do |container|
       puts "--- #{container} ---"
       system("podman", "logs", "--tail", "50", container)
       puts
@@ -342,8 +418,8 @@ namespace :doctor do
   end
 end
 
-desc "Start local environment (Floci + Infra + Backend + Worker + Reconciler + UI)"
-task up: ["infra:deploy", "backend:start", "worker:start", "reconciler:start", "ui:start"]
+desc "Start local environment (Floci + Infra + Backend + Reconciler + UI)"
+task up: ["infra:deploy", "backend:start", "reconciler:start", "ui:start"]
 
 desc "Stop and destroy all services"
 task down: ["floci:stop", "floci:start", "infra:destroy", "floci:clean_data", "floci:stop"]

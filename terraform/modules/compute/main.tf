@@ -22,6 +22,4 @@ resource "aws_lambda_event_source_mapping" "sqs_to_lambda" {
   function_name    = aws_lambda_function.document_processor.arn
   batch_size       = var.sqs_batch_size
   enabled          = true
-
-  function_response_types = ["ReportBatchItemFailures"]
 }

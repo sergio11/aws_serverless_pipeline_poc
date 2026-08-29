@@ -2,7 +2,7 @@ name: aws-local-poc
 
 services:
   floci:
-    image: ${FLOCI_IMAGE:-floci/floci:1.5.11}
+    image: ${FLOCI_IMAGE:-floci/floci:1.7.0}
     container_name: poc-floci
     restart: unless-stopped
     deploy:
@@ -27,19 +27,16 @@ services:
       FLOCI_STORAGE_PERSISTENT_PATH: /app/data
       FLOCI_SERVICES_LAMBDA_ENABLED: "true"
       FLOCI_SERVICES_LAMBDA_DOCKER_NETWORK: "poc-network"
+      FLOCI_SERVICES_LAMBDA_DOCKER_HOST_OVERRIDE: "floci"
       FLOCI_SERVICES_LAMBDA_DEFAULT_TIMEOUT_SECONDS: "30"
       FLOCI_SERVICES_LAMBDA_DEFAULT_MEMORY_MB: "128"
+      # podman-compose on Windows translates Unix paths (/run/user/...) to /mnt/c/...
+      # so socket volume mounts don't work. Instead, the Rakefile starts
+      # `podman system service --time=0 tcp:0.0.0.0:2376` inside the Podman machine
+      # and Floci connects to the Docker-compatible API over TCP.
+      FLOCI_DOCKER_DOCKER_HOST: "tcp://host.containers.internal:2376"
     volumes:
       - ./data/floci:/app/data
-      # SECURITY: Docker socket is REQUIRED for Floci Lambda simulation via Docker-in-Docker.
-      # This grants FULL control of the host Docker daemon to the container.
-      # NEVER use in production. For real AWS Lambda emulation, use Floci's native
-      # Lambda support without Docker socket or use rootless Podman socket with TLS.
-      #
-      # To disable Lambda simulation (recommended for security), set:
-      #   FLOCI_SERVICES_LAMBDA_ENABLED: "false"
-      # and remove the docker.sock volume mount below.
-      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - poc-network
     healthcheck:
@@ -77,6 +74,7 @@ services:
       - poc-network
 
   terraform:
+    image: aws-local-poc_terraform
     build:
       context: ./terraform/container
       dockerfile: Containerfile
@@ -144,126 +142,6 @@ services:
     networks:
       - poc-network
 
-  backend-test:
-    build:
-      context: ./backend
-      dockerfile: Containerfile
-      target: test
-    container_name: poc-backend-test
-    command: ["pytest", "tests", "--cov=app", "--cov-report=term-missing", "--cov-fail-under=98"]
-    tmpfs:
-      - /tmp
-    volumes:
-      - ./lambda/handler.py:/lambda/handler.py:ro
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      AWS_ENDPOINT_URL: http://floci:4566
-      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
-      S3_BUCKET: ${S3_BUCKET:-poc-local-documents}
-      DYNAMODB_TABLE: ${DYNAMODB_TABLE:-documents-metadata}
-      SQS_QUEUE_NAME: ${SQS_QUEUE_NAME:-document-events}
-    networks:
-      - poc-network
-
-  # Polling worker fallback. Used when Floci Lambda is unavailable.
-  # Primary processing now uses Terraform-managed Lambda function.
-  # WARNING: Do NOT start both this worker and the Terraform Lambda simultaneously.
-  # They consume the same SQS queue and would create a race condition.
-  lambda-worker:
-    build:
-      context: ./lambda
-      dockerfile: Containerfile
-    container_name: poc-lambda-worker
-    profiles: ["worker"]
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-          cpus: "0.25"
-    tmpfs:
-      - /tmp
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      AWS_ENDPOINT_URL: http://floci:4566
-      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
-      DYNAMODB_TABLE: ${DYNAMODB_TABLE:-documents-metadata}
-      SQS_QUEUE_NAME: ${SQS_QUEUE_NAME:-document-events}
-      WORKER_POLL_INTERVAL_SECONDS: ${WORKER_POLL_INTERVAL_SECONDS:-2}
-    ports:
-      - "8080:8080"
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    depends_on:
-      floci:
-        condition: service_healthy
-    networks:
-      - poc-network
-
-  lambda-worker-test:
-    build:
-      context: ./lambda
-      dockerfile: Containerfile
-      target: test
-    container_name: poc-lambda-worker-test
-    profiles: ["worker"]
-    command: ["pytest", "tests", "--cov=handler", "--cov-report=term-missing", "--cov-fail-under=98"]
-    tmpfs:
-      - /tmp
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      AWS_ENDPOINT_URL: http://floci:4566
-      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
-      DYNAMODB_TABLE: ${DYNAMODB_TABLE:-documents-metadata}
-      SQS_QUEUE_NAME: ${SQS_QUEUE_NAME:-document-events}
-    networks:
-      - poc-network
-
-  reconciler-test:
-    build:
-      context: ./lambda
-      dockerfile: Containerfile
-      target: test
-    container_name: poc-reconciler-test
-    command: ["pytest", "tests/test_reconciler.py", "--cov=reconciler", "--cov-report=term-missing", "--cov-fail-under=98"]
-    tmpfs:
-      - /tmp
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      AWS_ENDPOINT_URL: http://floci:4566
-      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
-      DYNAMODB_TABLE: ${DYNAMODB_TABLE:-documents-metadata}
-      SQS_QUEUE_NAME: ${SQS_QUEUE_NAME:-document-events}
-    networks:
-      - poc-network
-
   # Document reconciler worker. Recovers orphaned documents stuck in
   # CREATED or PROCESSING state. Runs reconciliation every 5 minutes.
   reconciler-worker:
@@ -310,80 +188,6 @@ services:
     depends_on:
       floci:
         condition: service_healthy
-    networks:
-      - poc-network
-
-  integration:
-    build:
-      context: ./tests/integration
-      dockerfile: Containerfile
-    container_name: poc-integration
-    restart: "no"
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-          cpus: "0.25"
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      AWS_ENDPOINT_URL: http://floci:4566
-      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
-      S3_BUCKET: ${S3_BUCKET:-poc-local-documents}
-      DYNAMODB_TABLE: ${DYNAMODB_TABLE:-documents-metadata}
-      SQS_QUEUE_NAME: ${SQS_QUEUE_NAME:-document-events}
-      SQS_DLQ_NAME: ${SQS_DLQ_NAME:-document-events-dlq}
-    depends_on:
-      floci:
-        condition: service_healthy
-    networks:
-      - poc-network
-
-  e2e:
-    build:
-      context: ./tests/e2e
-      dockerfile: Containerfile
-    container_name: poc-e2e
-    restart: "no"
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-          cpus: "0.25"
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      BACKEND_ENDPOINT: http://backend:8000
-      AWS_ENDPOINT_URL: http://floci:4566
-      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
-      S3_BUCKET: ${S3_BUCKET:-poc-local-documents}
-      DYNAMODB_TABLE: ${DYNAMODB_TABLE:-documents-metadata}
-      SQS_QUEUE_NAME: ${SQS_QUEUE_NAME:-document-events}
-      SQS_DLQ_NAME: ${SQS_DLQ_NAME:-document-events-dlq}
-    volumes:
-      - ./lambda/reconciler.py:/app/lambda/reconciler.py:ro
-    depends_on:
-      backend:
-        condition: service_healthy
-      # NOTE: E2E tests use the Terraform-managed Lambda function via Floci,
-      # not the polling worker. Do NOT add lambda-worker here.
-      # The Terraform Lambda is provisioned by `rake infra:deploy` before tests run.
     networks:
       - poc-network
 

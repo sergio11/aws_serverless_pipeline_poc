@@ -195,21 +195,14 @@ Additionally, expired lock detection (`MAX_LOCK_AGE_SECONDS = 300`) is implement
 
 ---
 
-### 📦 Container Topology with Compose Profiles
+### 📦 Container Topology and Ephemeral Test Execution
 
-The `compose.yaml` uses Docker Compose profiles to separate responsibilities:
+The `compose.yaml` is streamlined to contain only the **5 core runtime services**:
 
-- **Default profile** — Floci + Terraform + Backend + UI + tests. The main development stack that any developer runs with `rake up`.
-- **`worker` profile** — Only `lambda-worker` and `lambda-worker-test`. Explicitly activated with `podman-compose --profile worker up`.
+- **Core Runtime Services**: `floci`, `floci-ui`, `terraform`, `backend`, and `reconciler-worker`.
+- **Ephemeral Test Execution**: All unit, integration, and E2E tests run on demand in isolated, disposable containers (`podman run --rm`) managed via `Rakefile`.
 
-The reason is to avoid the anti-pattern of two consumers competing for the same SQS queue simultaneously. The `lambda-worker` is a fallback used only when Floci Lambda is unavailable — the Terraform Lambda is the primary processor. The explicit comment in `compose.yaml:170-173` documents this restriction:
-
-```yaml
-# WARNING: Do NOT start both this worker and the Terraform Lambda simultaneously.
-# They consume the same SQS queue and would create a race condition.
-```
-
-Profiles also allow running worker tests in isolation (`--profile worker`) without affecting the main stack.
+This decoupled design avoids container name collisions, keeps `compose.yaml` maintainable (~130 lines), and ensures tests run in clean, anonymous environments.
 
 ---
 
@@ -562,31 +555,24 @@ graph TB
 
         subgraph APP_GROUP["🟢 Application Group"]
             BE["⚡ backend<br/>FastAPI (test stage)<br/>Port: 8000<br/>Memory: 512M | CPU: 0.5<br/>Health: /ready endpoint"]
-            LW["🔄 lambda-worker<br/>Polling (worker profile)<br/>Port: 8080<br/>Memory: 256M | CPU: 0.25<br/>Health: /health endpoint"]
+            REC["🔄 reconciler-worker<br/>Document Reconciler<br/>Port: 8081<br/>Memory: 256M | CPU: 0.25"]
         end
 
-        subgraph TEST_GROUP["🧪 Testing Group"]
-            BE_TEST["🧪 backend-test<br/>pytest --cov-fail-under=98<br/>Memory: 256M | CPU: 0.25"]
-            LW_TEST["🧪 lambda-worker-test<br/>pytest --cov-fail-under=98<br/>Memory: 256M | CPU: 0.25"]
-            INT["🔗 integration<br/>Test Runner<br/>Memory: 256M | CPU: 0.25"]
-            E2E["🎯 e2e<br/>E2E Runner<br/>Memory: 256M | CPU: 0.25"]
+        subgraph TEST_GROUP["🧪 Ephemeral Test Execution (podman run --rm)"]
+            BE_TEST["🧪 backend unit tests"]
+            REC_TEST["🧪 reconciler unit tests"]
+            INT["🔗 integration tests"]
+            E2E["🎯 e2e tests"]
         end
     end
 
     FLOCI_UI -->|"depends_on: healthy"| FLOCI
     BE -->|"depends_on: healthy"| FLOCI
-    LW -->|"depends_on: healthy"| FLOCI
-    INT -->|"depends_on: healthy"| FLOCI
-    E2E -->|"depends_on: healthy"| BE
-
-    subgraph PROFILES["📋 Compose Profiles"]
-        DEFAULT["🟢 Default Profile<br/>floci + terraform<br/>+ backend + floci-ui"]
-        WORKER["🟠 Worker Profile<br/>lambda-worker<br/>(only when Floci Lambda<br/>unavailable)"]
-    end
+    REC -->|"depends_on: healthy"| FLOCI
 
     subgraph SECURITY_OPTS["🔒 Security Options"]
-        SEC_NO_NEW["no-new-privileges:true<br/>✅ backend<br/>✅ lambda-worker"]
-        SEC_TMPFS["tmpfs /tmp<br/>✅ backend<br/>✅ lambda-worker"]
+        SEC_NO_NEW["no-new-privileges:true<br/>✅ backend<br/>✅ reconciler-worker"]
+        SEC_TMPFS["tmpfs /tmp<br/>✅ backend<br/>✅ reconciler-worker"]
         SEC_LIMITS["Resource Limits<br/>✅ All services<br/>memory + CPU defined"]
     end
 
@@ -922,7 +908,7 @@ rake logs
 │       └── tests/
 │           └── test_document_workflow.py
 │
-├── compose.yaml                      # Podman Compose services (8 services)
+├── compose.yaml                      # Podman Compose services (5 core runtime services)
 ├── Rakefile                          # Task automation (278 lines)
 ├── .env.example                      # Environment variable template
 ├── .gitignore                        # Git ignore rules

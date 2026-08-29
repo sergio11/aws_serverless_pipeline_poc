@@ -14,9 +14,9 @@ BACKEND_ENDPOINT = os.getenv("BACKEND_ENDPOINT", "http://backend:8000")
 AWS_ENDPOINT_URL = os.getenv("AWS_ENDPOINT_URL", "http://floci:4566")
 AWS_REGION = os.getenv("AWS_DEFAULT_REGION", "eu-west-1")
 S3_BUCKET = os.getenv("S3_BUCKET", "poc-local-documents")
-DYNAMODB_TABLE = os.getenv("DYNAMODB_TABLE", "documents-metadata")
-SQS_QUEUE_NAME = os.getenv("SQS_QUEUE_NAME", "document-events")
-SQS_DLQ_NAME = os.getenv("SQS_DLQ_NAME", "document-events-dlq")
+DYNAMODB_TABLE = os.getenv("DYNAMODB_TABLE", "poc-local-documents-metadata")
+SQS_QUEUE_NAME = os.getenv("SQS_QUEUE_NAME", "poc-local-document-events")
+SQS_DLQ_NAME = os.getenv("SQS_DLQ_NAME", "poc-local-document-events-dlq")
 
 
 def _aws_config():
@@ -157,3 +157,174 @@ def test_document_delete_workflow() -> None:
     with httpx.Client(timeout=10) as client:
         delete_again = client.delete(f"{BACKEND_ENDPOINT}/documents/{document_id}")
         assert delete_again.status_code == 404
+
+
+def _create_document_and_wait_processed(client: httpx.Client, name: str, content: str) -> str:
+    response = client.post(
+        f"{BACKEND_ENDPOINT}/documents",
+        json={"name": name, "content": content},
+    )
+    assert response.status_code == 201
+    document_id = response.json()["id"]
+
+    deadline = time.monotonic() + 45
+    while time.monotonic() < deadline:
+        read_response = client.get(f"{BACKEND_ENDPOINT}/documents/{document_id}")
+        assert read_response.status_code == 200
+        if read_response.json()["status"] == "processed":
+            return document_id
+        time.sleep(1)
+    pytest.fail(f"Document {document_id} did not reach processed status within 45s")
+
+
+def test_document_content_retrieval() -> None:
+    """Verify GET /documents/{id}/content returns the original bytes after processing."""
+    unique_name = f"e2e-content-{ULID()}.txt"
+    content = "Content retrieval test"
+
+    with httpx.Client(timeout=10) as client:
+        document_id = _create_document_and_wait_processed(client, unique_name, content)
+
+        response = client.get(f"{BACKEND_ENDPOINT}/documents/{document_id}/content")
+        assert response.status_code == 200
+        assert response.text == content
+        assert "text/plain" in response.headers["content-type"]
+
+
+def test_document_content_nonexistent_returns_404() -> None:
+    """Verify GET /documents/{id}/content returns 404 for unknown documents."""
+    with httpx.Client(timeout=10) as client:
+        response = client.get(f"{BACKEND_ENDPOINT}/documents/nonexistent-doc-000/content")
+        assert response.status_code == 404
+
+
+def test_document_failed_status() -> None:
+    """Verify a document that fails Lambda processing reaches failed status.
+
+    Creates a document, then deletes its S3 object before Lambda processes it.
+    Lambda will fail on get_object, setting status=failed in DynamoDB.
+    """
+    unique_name = f"e2e-failed-{ULID()}.txt"
+    content = "Will fail"
+
+    s3 = boto3.client("s3", **_aws_config())
+
+    with httpx.Client(timeout=10) as client:
+        response = client.post(
+            f"{BACKEND_ENDPOINT}/documents",
+            json={"name": unique_name, "content": content},
+        )
+        assert response.status_code == 201
+        document_id = response.json()["id"]
+
+    object_key = f"documents/{document_id}/{unique_name}"
+    s3.delete_object(Bucket=S3_BUCKET, Key=object_key)
+
+    deadline = time.monotonic() + 45
+    while time.monotonic() < deadline:
+        with httpx.Client(timeout=10) as client:
+            read_response = client.get(f"{BACKEND_ENDPOINT}/documents/{document_id}")
+        assert read_response.status_code == 200
+        doc = read_response.json()
+        if doc["status"] == "failed":
+            break
+        time.sleep(1)
+    else:
+        pytest.fail(f"Document {document_id} did not reach failed status within 45s")
+
+    dynamodb = boto3.resource("dynamodb", **_aws_config())
+    table = dynamodb.Table(DYNAMODB_TABLE)
+    db_item = table.get_item(Key={"id": document_id})["Item"]
+    assert db_item["status"] == "failed"
+    assert "processed_at" not in db_item
+
+
+def test_get_nonexistent_document_returns_404() -> None:
+    """Verify GET /documents/{id} returns 404 for unknown documents."""
+    with httpx.Client(timeout=10) as client:
+        response = client.get(f"{BACKEND_ENDPOINT}/documents/nonexistent-doc-000")
+        assert response.status_code == 404
+
+
+def test_delete_nonexistent_document_returns_404() -> None:
+    """Verify DELETE /documents/{id} returns 404 for unknown documents."""
+    with httpx.Client(timeout=10) as client:
+        response = client.delete(f"{BACKEND_ENDPOINT}/documents/nonexistent-doc-000")
+        assert response.status_code == 404
+
+
+def test_create_document_with_invalid_payload_returns_422() -> None:
+    """Verify POST /documents rejects invalid payloads."""
+    with httpx.Client(timeout=10) as client:
+        response = client.post(
+            f"{BACKEND_ENDPOINT}/documents",
+            json={"name": "", "content": ""},
+        )
+        assert response.status_code == 422
+
+        response = client.post(
+            f"{BACKEND_ENDPOINT}/documents",
+            json={"name": "x" * 256, "content": "ok"},
+        )
+        assert response.status_code == 422
+
+
+def test_health_and_readiness_endpoints() -> None:
+    """Verify /health and /ready endpoints respond correctly."""
+    with httpx.Client(timeout=10) as client:
+        health = client.get(f"{BACKEND_ENDPOINT}/health")
+        assert health.status_code == 200
+        assert health.json()["status"] == "ok"
+
+        ready = client.get(f"{BACKEND_ENDPOINT}/ready")
+        assert ready.status_code == 200
+        body = ready.json()
+        assert body["status"] == "ok"
+        assert "dependencies" in body
+
+
+def test_reconciler_recovery_of_stale_document() -> None:
+    """Verify the reconciler recovers a document stuck in created state.
+
+    Creates a document, waits for processing, then directly sets DynamoDB
+    status back to 'created' with an old timestamp. Calls the reconciler
+    to requeue it, then verifies Lambda reprocesses it to 'processed'.
+    """
+    sys.path.insert(0, "/app/lambda")
+    from reconciler import run_reconciliation
+
+    unique_name = f"e2e-reconcile-{ULID()}.txt"
+    content = "Reconcile me"
+
+    with httpx.Client(timeout=10) as client:
+        document_id = _create_document_and_wait_processed(client, unique_name, content)
+
+    dynamodb = boto3.resource("dynamodb", **_aws_config())
+    table = dynamodb.Table(DYNAMODB_TABLE)
+    stale_time = (datetime.now(UTC) - timedelta(minutes=15)).isoformat()
+    table.update_item(
+        Key={"id": document_id},
+        UpdateExpression="SET #s = :created, created_at = :ts REMOVE processed_at",
+        ExpressionAttributeNames={"#s": "status"},
+        ExpressionAttributeValues={":created": "created", ":ts": stale_time},
+    )
+
+    config = {
+        "endpoint_url": AWS_ENDPOINT_URL,
+        "region_name": AWS_REGION,
+        "aws_access_key_id": "test",
+        "aws_secret_access_key": "test",
+    }
+    result = run_reconciliation(config, DYNAMODB_TABLE, SQS_QUEUE_NAME, max_age_minutes=10)
+    assert result["reconciled"] == 1
+
+    deadline = time.monotonic() + 45
+    while time.monotonic() < deadline:
+        with httpx.Client(timeout=10) as client:
+            read_response = client.get(f"{BACKEND_ENDPOINT}/documents/{document_id}")
+        assert read_response.status_code == 200
+        if read_response.json()["status"] == "processed":
+            break
+        time.sleep(1)
+    else:
+        pytest.fail(f"Document {document_id} was not reprocessed after reconciliation")

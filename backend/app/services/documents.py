@@ -142,8 +142,8 @@ class DocumentService:
     def delete_document(self, document_id: str) -> None:
         try:
             document = self._store.get(document_id)
-        except Exception:
-            raise DocumentNotFoundError(document_id)
+        except Exception as exc:
+            raise DocumentInfrastructureError("document metadata lookup failed") from exc
         if document is None:
             raise DocumentNotFoundError(document_id)
         try:

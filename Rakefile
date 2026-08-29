@@ -337,14 +337,16 @@ namespace :integration do
     run_command("podman", "build", "-t", "aws-local-poc_integration", "./tests/integration")
   end
 
-  task test: :build do
-    run_command("podman", "run", "--rm",
-                "--network", "poc-network",
-                "-e", "AWS_ENDPOINT_URL=http://floci:4566",
-                "-e", "AWS_DEFAULT_REGION=eu-west-1",
-                "-e", "AWS_ACCESS_KEY_ID=test",
-                "-e", "AWS_SECRET_ACCESS_KEY=test",
-                "aws-local-poc_integration", "pytest", "tests")
+  task test: ["infra:deploy", :build] do
+    env_args = File.exist?(".env") ? ["--env-file", ".env"] : []
+    cmd = ["podman", "run", "--rm",
+           "--network", "poc-network"] + env_args + [
+           "-e", "AWS_ENDPOINT_URL=http://floci:4566",
+           "-e", "AWS_DEFAULT_REGION=eu-west-1",
+           "-e", "AWS_ACCESS_KEY_ID=test",
+           "-e", "AWS_SECRET_ACCESS_KEY=test",
+           "aws-local-poc_integration", "pytest", "tests"]
+    run_command(*cmd)
   end
 end
 
@@ -378,7 +380,7 @@ namespace :test do
   task unit: ["backend:test", "reconciler:test", "lambda:test"]
   task integration: "integration:test"
   task e2e: "e2e:test"
-  task all: [:unit, :e2e]
+  task all: [:unit, :integration, :e2e]
 end
 
 namespace :services do
@@ -417,7 +419,7 @@ task up: ["infra:deploy", "backend:start", "ui:start"]
 desc "Stop and destroy all services"
 task down: ["floci:stop", "floci:start", "infra:destroy", "floci:clean_data", "floci:stop"]
 
-desc "Run all tests (unit, e2e)"
+desc "Run all test suites (unit, integration, e2e)"
 task test: "test:all"
 
 desc "Show logs for all running services"

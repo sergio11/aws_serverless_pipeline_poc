@@ -11,9 +11,9 @@ import pytest
 AWS_ENDPOINT_URL = os.getenv("AWS_ENDPOINT_URL", "http://floci:4566")
 AWS_REGION = os.getenv("AWS_DEFAULT_REGION", "eu-west-1")
 S3_BUCKET = os.getenv("S3_BUCKET", "poc-local-documents")
-DYNAMODB_TABLE = os.getenv("DYNAMODB_TABLE", "documents-metadata")
-SQS_QUEUE_NAME = os.getenv("SQS_QUEUE_NAME", "document-events")
-SQS_DLQ_NAME = os.getenv("SQS_DLQ_NAME", "document-events-dlq")
+DYNAMODB_TABLE = os.getenv("DYNAMODB_TABLE", "poc-local-documents-metadata")
+SQS_QUEUE_NAME = os.getenv("SQS_QUEUE_NAME", "poc-local-document-events")
+SQS_DLQ_NAME = os.getenv("SQS_DLQ_NAME", "poc-local-document-events-dlq")
 
 
 def _aws_config():

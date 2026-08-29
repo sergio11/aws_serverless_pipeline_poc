@@ -1,4 +1,4 @@
-# 🏗️ AWS Local Cloud Lab POC
+# 🏗️ AWS Cloud Architecture POC — Serverless Document Processing Pipeline
 
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.139-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -6,19 +6,30 @@
 [![Podman](https://img.shields.io/badge/Podman-5.x-892CA0?style=for-the-badge&logo=podman&logoColor=white)](https://podman.io/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
 
-A **local-first AWS learning lab** that replicates the complete AWS development lifecycle — from infrastructure provisioning to asynchronous event-driven processing.
+A **production-grade AWS architecture POC** that validates Infrastructure as Code, event-driven processing, and distributed state management — from Terraform provisioning through Lambda-triggered asynchronous pipelines.
 
-This POC demonstrates production-grade AWS patterns: **Infrastructure as Code**, **event-driven architecture**, **distributed locking**, **idempotent processing**, and **observability** — all running locally with Floci as the AWS emulator.
+Built with Python, FastAPI, Terraform, and Podman, this project demonstrates that production-grade AWS patterns — **modular IaC**, **event-driven architecture**, **distributed locking**, **idempotent processing**, and **observability** — can be developed and tested against an AWS-compatible local runtime powered by Floci, producing identical boto3 code ready for real AWS.
+
+### What This POC Demonstrates
+
+| Pattern | Implementation |
+|---------|---------------|
+| **Infrastructure as Code** | 6 modular Terraform modules with explicit dependency chains and idempotent provisioning |
+| **Event-Driven Architecture** | SQS + Lambda with Dead Letter Queue for poison pill isolation and resilient retries |
+| **Distributed Locking** | DynamoDB conditional writes with owner-based release and expired lock detection |
+| **Idempotent Processing** | Worker verifies document status before processing, preventing double execution |
+| **Observability** | CloudWatch dashboard with 4 metric alarms and SNS notifications |
+| **Container Security** | Rootless Podman, no-new-privileges, tmpfs, resource limits per service |
 
 ---
 
-[🎯 Objectives](#-platform-objectives) · [📋 Disclaimer](#-disclaimer) · [🚀 Why This Stack?](#-why-this-stack) · [💪 Strengths & Weaknesses](#-strengths--weaknesses) · [🧭 Design Decisions](#-design-decisions) · [🏛️ Architecture](#️-architecture) · [✨ Features](#-features) · [⚙️ Configuration](#-configuration) · [🧪 Testing](#-testing) · [🎬 Quick Start](#-quick-start) · [📁 Project Structure](#-project-structure) · [🔧 Rake Commands](#-rake-commands)
+[🏛️ Architecture](#%EF%B8%8F-architecture) · [🧭 Design Decisions](#-design-decisions) · [🚀 Why This Stack?](#-why-this-stack) · [💪 Strengths & Weaknesses](#-strengths--weaknesses) · [✨ Features](#-features) · [⚙️ Configuration](#-configuration) · [🧪 Testing](#-testing) · [🎬 Quick Start](#-quick-start) · [📁 Project Structure](#-project-structure) · [🔧 Rake Commands](#-rake-commands)
 
 ---
 
-## 🎯 Platform Objectives
+## 🏛️ Architecture Overview
 
-This platform POC is designed to demonstrate and validate cloud-grade architecture patterns in a 100% local environment. Each component was deliberately chosen to replicate real production decisions, eliminating AWS account dependencies and cloud costs.
+This POC is designed to demonstrate and validate cloud-grade architecture patterns using an AWS-compatible local runtime. Each component was deliberately chosen to replicate real production decisions, showcasing transferable AWS skills.
 
 - 🏗️ **Infrastructure as Code (Modular Terraform)** — Declarative and idempotent provisioning of the entire infrastructure through 6 independent modules (storage, database, messaging, compute, iam, monitoring) with clean interfaces and explicit dependency chains.
 
@@ -28,21 +39,11 @@ This platform POC is designed to demonstrate and validate cloud-grade architectu
 
 - 📨 **Idempotent Processing** — The worker verifies document status before processing, skipping already-processed documents (status=PROCESSED) and using atomic locks to prevent double concurrent processing.
 
-- 🧪 **Local-First Development (Zero Cost)** — The entire stack (API, Lambda, SQS, DynamoDB, S3, CloudWatch) runs locally via Floci as an AWS emulator, enabling fast iteration cycles without AWS accounts or billing.
+- 🧪 **AWS-Compatible Local Runtime** — The entire stack (API, Lambda, SQS, DynamoDB, S3, CloudWatch) runs against Floci, an AWS emulator providing API parity with real services, enabling fast iteration cycles with identical boto3 code.
 
-- 🐳 **Containerized Workflows (Podman)** — Complete orchestration via Podman Compose with 4 core runtime services (`floci`, `floci-ui`, `terraform`, `backend`), ephemeral test execution, and security hardening (rootless, no-new-privileges).
+- 🐳 **Containerized Workflows (Podman)** — Complete orchestration via Podman Compose with 5 core runtime services (`floci`, `floci-ui`, `terraform`, `backend`, `reconciler-worker`), ephemeral test execution, and security hardening (rootless, no-new-privileges).
 
 - 📊 **Observability (CloudWatch Dashboards + Alarms)** — Centralized dashboard with SQS depth, Lambda errors/throttles, and DLQ depth metrics, backed by 4 configured alarms and SNS notifications for proactive alerting.
-
----
-
-## 📋 Disclaimer
-
-This project is developed for **educational and research purposes** only. It is intended to provide hands-on experience and deepen knowledge in **AWS cloud patterns**, **Infrastructure as Code**, **event-driven architectures**, and **containerized development workflows**.
-
-It is **not designed** for production deployment. The local emulator (Floci) provides an AWS-compatible API surface but does not replicate AWS service limits, networking, security boundaries, or global infrastructure.
-
-The primary focus is to explore **Terraform modularity**, **serverless processing patterns**, **distributed state management**, and **local-first development** — emphasizing developer learning and architectural exploration in a controlled environment.
 
 ---
 
@@ -76,9 +77,9 @@ The result is a development experience identical to Docker but with a fundamenta
 
 Floci emulates the complete API of core AWS services (S3, DynamoDB, SQS, Lambda) on a single port (4566), providing API parity with real services. This allows the same boto3 code — the same `PutObject`, `PutItem`, `SendMessage` calls — to work both locally against Floci and in production against real AWS. No conditional imports, no special configuration, no mocks: the code is identical.
 
-Zero-cost development is an obvious advantage, but CI/CD parity is the real benefit. Integration and E2E tests run against the same emulated API that the backend uses in development, ensuring that if tests pass locally, they will pass against real AWS (assuming configuration parity). The `hybrid` storage mode preserves state across container restarts, enabling iteration without reprovisioning the complete infrastructure each cycle.
+CI/CD parity is the real benefit. Integration and E2E tests run against the same emulated API that the backend uses in development, ensuring that if tests pass locally, they will pass against real AWS (assuming configuration parity). The `hybrid` storage mode preserves state across container restarts, enabling iteration without reprovisioning the complete infrastructure each cycle.
 
-Iteration speed is the other key benefit: no network latency, no cold starts, no service limits. A complete `terraform apply → backend start → test → destroy` cycle takes seconds, not minutes. For an educational POC, this immediate feedback is invaluable for experimenting and learning.
+Iteration speed is the other key benefit: no network latency, no cold starts, no service limits. A complete `terraform apply → backend start → test → destroy` cycle takes seconds, not minutes — invaluable for rapid prototyping and architectural exploration.
 
 ### 📨 SQS + DLQ (Event-Driven Decoupling)
 
@@ -94,7 +95,7 @@ The distributed lock implemented via DynamoDB conditional writes is the POC's mo
 
 Owner-based release (`ConditionExpression="processing_owner = :owner"`) prevents a worker from accidentally releasing another worker's lock. Expired lock detection (>300 seconds) enables automatic recovery when a worker dies without releasing its lock. Idempotent processing — documents with `status=PROCESSED` are skipped — guarantees that retries don't cause duplicate processing.
 
-This pattern is exactly what would be used in production with real DynamoDB. The only difference is the endpoint: `localhost:4566` vs `dynamodb.eu-west-1.amazonaws.com`. The POC demonstrates that the concurrency logic, error handling, and failure recovery work correctly without needing an AWS account.
+This pattern is exactly what would be used in production with real DynamoDB. The only difference is the endpoint: `localhost:4566` vs `dynamodb.eu-west-1.amazonaws.com`. The POC demonstrates that the concurrency logic, error handling, and failure recovery work correctly against an AWS-compatible API.
 
 ### 🔑 ULID vs UUID
 
@@ -112,7 +113,6 @@ The implementation in `documents.py:88` is trivial: `document_id = str(ULID())`.
 
 | Aspect | Detail |
 |--------|--------|
-| **Zero cloud cost** | The entire stack runs locally with Floci. No AWS account required, no billing, no surprise charges. |
 | **Production-grade patterns** | IaC with Terraform, event-driven architecture, DLQ, distributed locking, and idempotent processing — all patterns used in real production systems. |
 | **Modular Terraform** | 6 independent modules (`storage`, `database`, `messaging`, `compute`, `iam`, `monitoring`) with clean interfaces. Each module is reusable across projects. |
 | **Layered architecture** | Clean separation: Routes (HTTP) → DocumentService (logic) → DocumentStore (Protocol). Protocol-based dependency injection enables complete testing without AWS. |
@@ -465,7 +465,7 @@ graph TB
     style STORAGE_MOD fill:#E0F7FA,color:#000,stroke:#00BCD4
     style DATABASE_MOD fill:#F3E5F5,color:#000,stroke:#9C27B0
     style MESSAGING_MOD fill:#FFEBEE,color:#000,stroke:#F44336
-    style IAM_MOD fill:#FFF3E0,color:#000,stroke:#FF9800
+    style IAM_MOD_F fill:#FFF3E0,color:#000,stroke:#FF9800
     style COMPUTE_MOD fill:#E8F5E9,color:#000,stroke:#4CAF50
     style MONITORING_MOD fill:#ECEFF1,color:#000,stroke:#607D8B
 ```
@@ -576,25 +576,20 @@ graph TB
         SEC_LIMITS["Resource Limits<br/>✅ All services<br/>memory + CPU defined"]
     end
 
-    FLOCI -.->|"required for<br/>Lambda simulation"| FLOCI
-
     style PODMAN fill:#E8EAF6,color:#000,stroke:#3F51B5
     style INFRA_GROUP fill:#E3F2FD,color:#000,stroke:#2196F3
     style APP_GROUP fill:#E8F5E9,color:#000,stroke:#4CAF50
     style TEST_GROUP fill:#FFF3E0,color:#000,stroke:#FF9800
-    style PROFILES fill:#F3E5F5,color:#000,stroke:#9C27B0
     style SECURITY_OPTS fill:#FFEBEE,color:#000,stroke:#F44336
     style FLOCI fill:#2196F3,color:#fff,stroke:#1565C0
     style BE fill:#4CAF50,color:#fff,stroke:#2E7D32
-    style LW fill:#FF9800,color:#fff,stroke:#E65100
     style E2E fill:#E91E63,color:#fff,stroke:#AD1457
     style INT fill:#9C27B0,color:#fff,stroke:#6A1B9A
     style BE_TEST fill:#E91E63,color:#fff,stroke:#AD1457
-    style LW_TEST fill:#E91E63,color:#fff,stroke:#AD1457
+    style REC_TEST fill:#E91E63,color:#fff,stroke:#AD1457
     style FLOCI_UI fill:#2196F3,color:#fff,stroke:#1565C0
     style TF fill:#2196F3,color:#fff,stroke:#1565C0
-    style DEFAULT fill:#4CAF50,color:#fff,stroke:#2E7D32
-    style WORKER fill:#FF9800,color:#fff,stroke:#E65100
+    style REC fill:#FF9800,color:#fff,stroke:#E65100
     style SEC_NO_NEW fill:#4CAF50,color:#fff,stroke:#2E7D32
     style SEC_TMPFS fill:#4CAF50,color:#fff,stroke:#2E7D32
     style SEC_LIMITS fill:#4CAF50,color:#fff,stroke:#2E7D32
@@ -662,6 +657,18 @@ Features:
 - Lambda function inspector
 - CloudWatch log viewer
 
+#### Console Home — AWS Local Runtime Overview
+
+![Floci Console Home — AWS Local Runtime overview](docs/picture_1.PNG)
+
+#### Cloud Explorer — S3 Bucket with Metadata
+
+![Floci Cloud Explorer — poc-local-documents bucket with metadata](docs/picture_2.PNG)
+
+#### Full Dashboard — All AWS Services
+
+![Floci Dashboard — Compute, DynamoDB, Serverless, Storage, Networking](docs/picture_3.PNG)
+
 ---
 
 ## ⚙️ Configuration
@@ -692,8 +699,8 @@ AWS_ENDPOINT_URL=http://floci:4566
 | `AWS_ACCESS_KEY_ID` | `test` | Dummy access key |
 | `AWS_SECRET_ACCESS_KEY` | `test` | Dummy secret key |
 | `S3_BUCKET` | `poc-local-documents` | S3 bucket name |
-| `DYNAMODB_TABLE` | `documents-metadata` | DynamoDB table name |
-| `SQS_QUEUE_NAME` | `document-events` | SQS queue name |
+| `DYNAMODB_TABLE` | `poc-local-documents-metadata` | DynamoDB table name |
+| `SQS_QUEUE_NAME` | `poc-local-document-events` | SQS queue name |
 
 ### 🏗️ Terraform Variables
 
@@ -964,20 +971,6 @@ rake logs
 
 ---
 
-## 📜 Repository Safety
-
-The repository ignores:
-
-- Local environment files (`.env`)
-- Python caches (`__pycache__`, `.pytest_cache`)
-- Terraform state (`.terraform/`, `*.tfstate`)
-- Local emulator data (`data/floci/`)
-- Logs and temporary files (`tmp/`, `logs/`)
-
-**Real AWS credentials must never be committed.**
-
----
-
 ## 📄 License
 
 This is a Proof of Concept. Not intended for production use.
@@ -1010,6 +1003,8 @@ SOFTWARE.
 
 ---
 
-**Built with ❤️ using Python, Terraform & Podman**
+> **Note:** This POC is developed for educational and research purposes. It demonstrates production-grade AWS architecture patterns using an AWS-compatible local runtime. It is not intended for production deployment. The local emulator provides API parity but does not replicate AWS service limits, networking, security boundaries, or global infrastructure.
 
-[⬆️ Back to Top](#-aws-local-cloud-lab-poc)
+**Built with ❤️ using Python, FastAPI, Terraform, Podman & AWS-compatible services**
+
+[⬆️ Back to Top](#-aws-cloud-architecture-poc--serverless-document-processing-pipeline)

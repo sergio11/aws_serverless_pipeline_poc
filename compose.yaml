@@ -47,7 +47,7 @@ services:
       start_period: 5s
 
   floci-ui:
-    image: ${FLOCI_UI_IMAGE:-floci/floci-ui:latest}
+    image: ${FLOCI_UI_IMAGE:-floci/floci-ui:0.3.0}
     container_name: poc-floci-ui
     restart: unless-stopped
     deploy:

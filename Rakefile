@@ -166,11 +166,11 @@ namespace :floci do
   task start: [:ensure_podman_tcp, :up, :wait]
 
   task :stop do
-    run_command("podman-compose", "-f", COMPOSE_FILE, "down", "-t", "10")
+    run_command("podman-compose", "-f", COMPOSE_FILE, "down", "-t", "10", "--remove-orphans")
   end
 
   task :down do
-    run_command("podman-compose", "-f", COMPOSE_FILE, "down", "-t", "10")
+    run_command("podman-compose", "-f", COMPOSE_FILE, "down", "-t", "10", "--remove-orphans")
   end
 
   task :clean_data do

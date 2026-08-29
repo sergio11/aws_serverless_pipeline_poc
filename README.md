@@ -44,7 +44,7 @@ This POC is designed to demonstrate and validate cloud-grade architecture patter
 
 - 🧪 **AWS-Compatible Local Runtime** — The entire stack (API, Lambda, SQS, DynamoDB, S3, CloudWatch) runs against Floci, an AWS emulator providing API parity with real services, enabling fast iteration cycles with identical boto3 code.
 
-- 🐳 **Containerized Workflows (Podman)** — Complete orchestration via Podman Compose with 5 core runtime services (`floci`, `floci-ui`, `terraform`, `backend`, `reconciler-worker`), ephemeral test execution, and security hardening (rootless, no-new-privileges).
+- 🐳 **Containerized Workflows (Podman)** — Complete orchestration via Podman Compose with 4 core runtime services (`floci`, `floci-ui`, `terraform`, `backend`), ephemeral test execution, and security hardening (rootless, no-new-privileges).
 
 - 📊 **Observability (CloudWatch Dashboards + Alarms)** — Centralized dashboard with SQS depth, Lambda errors/throttles, and DLQ depth metrics, backed by 4 configured alarms and SNS notifications for proactive alerting.
 
@@ -810,7 +810,7 @@ graph TB
     subgraph "🧪 Test Pyramid"
         E2E["🎯 E2E Tests<br/>Full workflow validation<br/>Backend + Lambda + Floci"]
         INT["🔗 Integration Tests<br/>S3/DynamoDB/SQS against Floci"]
-        UNIT["⚙️ Unit Tests<br/>Backend (98%+ coverage)<br/>Lambda Worker (98%+ coverage)"]
+        UNIT["⚙️ Unit Tests<br/>Backend (98%+ coverage)<br/>Document Processor (98%+ coverage)<br/>Reconciler (98%+ coverage)"]
     end
 
     E2E --> INT
@@ -823,26 +823,31 @@ graph TB
 
 ### ⚙️ Unit Tests
 
-Backend and worker tests with **98%+ coverage threshold**:
+Backend, document processor, and reconciler tests with **98%+ coverage threshold**:
 
 ```powershell
 # Backend unit tests
 rake backend:test
 
-# Worker unit tests
+# Document processor unit tests
 rake worker:test
 
-# Both together
+# Reconciler unit tests
+rake reconciler:test
+
+# All unit tests together
 rake test:unit
 ```
 
 Tests verify:
 - Document CRUD operations
 - AWS store adapter (S3, DynamoDB, SQS)
-- Lambda handler batch processing
-- Distributed lock acquisition/release
-- Idempotent processing
-- Error handling and rollback
+- Document Processor: Lambda handler batch processing
+- Document Processor: Distributed lock acquisition/release
+- Document Processor: Idempotent processing
+- Document Processor: Error handling and rollback
+- Reconciler: Stale document detection
+- Reconciler: Lock reset and requeue logic
 - DocumentStatus enum synchronization between backend and Lambda
 
 ### 🔗 Integration Tests
@@ -960,11 +965,13 @@ rake logs
 │   │       └── documents.py          # Document service + Protocol
 │   └── tests/                        # Unit tests (98%+ coverage)
 │
-├── lambda/                           # Lambda function / polling worker
+├── lambda/                           # Lambda functions (dual architecture)
 │   ├── Containerfile                 # Multi-stage container build
-│   ├── handler.py                    # Dual-purpose: Lambda + SQS worker
-│   ├── reconciler.py                 # Document reconciler (orphan recovery)
-│   └── tests/                        # Worker + reconciler unit tests (98%+ coverage)
+│   ├── handler.py                    # Document Processor: SQS → DynamoDB + S3
+│   ├── reconciler.py                 # Reconciler: EventBridge → orphan recovery
+│   └── tests/                        # Unit tests (98%+ coverage)
+│       ├── test_handler.py           # Document Processor tests
+│       └── test_reconciler.py        # Reconciler tests
 │
 ├── terraform/                        # Infrastructure as Code
 │   ├── main.tf                       # Root module composition
@@ -982,7 +989,7 @@ rake logs
 │       ├── storage/                  # S3 bucket module
 │       ├── database/                 # DynamoDB table module
 │       ├── messaging/                # SQS queue + DLQ module
-│       ├── compute/                  # Lambda function + ESM module
+│       ├── compute/                  # Document Processor + Reconciler Lambda
 │       ├── iam/                      # IAM role + policies module
 │       └── monitoring/               # CloudWatch dashboard + alarms module
 │
@@ -994,7 +1001,7 @@ rake logs
 │       └── tests/
 │           └── test_document_workflow.py
 │
-├── compose.yaml                      # Podman Compose services (5 core runtime services)
+├── compose.yaml                      # Podman Compose services (4 core runtime services)
 ├── Rakefile                          # Task automation (278 lines)
 ├── .env.example                      # Environment variable template
 ├── .gitignore                        # Git ignore rules
@@ -1019,7 +1026,7 @@ rake logs
 
 | Command | Description |
 |---------|-------------|
-| `rake up` | Start everything (Floci + Infra + Backend + Worker + Reconciler + UI) |
+| `rake up` | Start everything (Floci + Infra + Backend + UI) |
 | `rake down` | Stop and destroy all services |
 | `rake backend:start` | Start the FastAPI backend |
 | `rake worker:start` | Start the Lambda polling worker |

@@ -30,7 +30,7 @@ This platform POC is designed to demonstrate and validate cloud-grade architectu
 
 - 🧪 **Local-First Development (Zero Cost)** — The entire stack (API, Lambda, SQS, DynamoDB, S3, CloudWatch) runs locally via Floci as an AWS emulator, enabling fast iteration cycles without AWS accounts or billing.
 
-- 🐳 **Containerized Workflows (Podman)** — Complete orchestration via Podman Compose with 7 services, separate worker/lambda profiles, multi-stage builds for testing, and security hardening (rootless, no-new-privileges).
+- 🐳 **Containerized Workflows (Podman)** — Complete orchestration via Podman Compose with 4 core runtime services (`floci`, `floci-ui`, `terraform`, `backend`), ephemeral test execution, and security hardening (rootless, no-new-privileges).
 
 - 📊 **Observability (CloudWatch Dashboards + Alarms)** — Centralized dashboard with SQS depth, Lambda errors/throttles, and DLQ depth metrics, backed by 4 configured alarms and SNS notifications for proactive alerting.
 

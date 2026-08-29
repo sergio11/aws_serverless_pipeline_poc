@@ -15,7 +15,7 @@ Built with Python, FastAPI, Terraform, and Podman, this project demonstrates tha
 | Pattern | Implementation |
 |---------|---------------|
 | **Infrastructure as Code** | 6 modular Terraform modules with explicit dependency chains and idempotent provisioning |
-| **Event-Driven Architecture** | SQS + Lambda with Dead Letter Queue for poison pill isolation and resilient retries |
+| **Event-Driven Architecture** | SQS + Lambda with Dead Letter Queue for poison pill isolation, resilient retries, and `ReportBatchItemFailures` for partial batch failure handling |
 | **Distributed Locking** | DynamoDB conditional writes with owner-based release and expired lock detection |
 | **Idempotent Processing** | Worker verifies document status before processing, preventing double execution |
 | **Observability** | CloudWatch dashboard with 4 metric alarms and SNS notifications |
@@ -87,7 +87,7 @@ SQS acts as the communication backbone between the REST API and the asynchronous
 
 The Dead Letter Queue (DLQ) with `maxReceiveCount=3` implements the **poison pill isolation** pattern: malformed messages or those causing repeated errors are automatically moved to the dead letter queue after 3 attempts, preventing them from blocking the main queue. CloudWatch alarms on DLQ depth provide early observability — an operator knows immediately when something fails without manually reviewing logs.
 
-Error handling in `lambda_handler` with `ReportBatchItemFailures` demonstrates the **retry resilience** pattern: each message is processed independently, failures don't affect successful messages, and messages blocked by distributed locks are returned to the queue for later retry. This is exactly how a real Lambda would work in production.
+Error handling in `lambda_handler` with `ReportBatchItemFailures` demonstrates the **retry resilience** pattern: each message is processed independently, failures don't affect successful messages, and messages blocked by distributed locks or referencing non-existent documents (`DocumentNotFoundError`) are returned to the queue for later retry. After `maxReceiveCount=3` failures, SQS automatically moves the message to the DLQ for poison pill isolation. This is exactly how a real Lambda would work in production.
 
 ### 🔒 Distributed Locking (DynamoDB Conditional Writes)
 
@@ -113,7 +113,7 @@ The implementation in `documents.py:88` is trivial: `document_id = str(ULID())`.
 
 | Aspect | Detail |
 |--------|--------|
-| **Production-grade patterns** | IaC with Terraform, event-driven architecture, DLQ, distributed locking, and idempotent processing — all patterns used in real production systems. |
+| **Production-grade patterns** | IaC with Terraform, event-driven architecture, DLQ with `maxReceiveCount` and `ReportBatchItemFailures`, distributed locking, and idempotent processing — all patterns used in real production systems. |
 | **Modular Terraform** | 6 independent modules (`storage`, `database`, `messaging`, `compute`, `iam`, `monitoring`) with clean interfaces. Each module is reusable across projects. |
 | **Layered architecture** | Clean separation: Routes (HTTP) → DocumentService (logic) → DocumentStore (Protocol). Protocol-based dependency injection enables complete testing without AWS. |
 | **Dual-purpose Lambda** | The same `handler.py` works as both a Lambda function AND a polling worker — demonstrating serverless and long-polling patterns in a single file. |
@@ -128,7 +128,7 @@ The implementation in `documents.py:88` is trivial: `document_id = str(ULID())`.
 
 | Aspect | Detail |
 |--------|--------|
-| **Local emulator fidelity** | Floci doesn't replicate AWS service limits, IAM policies, VPC networking, or eventual consistency behaviors. Tests may pass locally but fail on real AWS. |
+| **Local emulator fidelity** | Floci doesn't replicate AWS service limits, IAM policies, VPC networking, or eventual consistency behaviors. DLQ redrive timing depends on `visibility_timeout_seconds` (330s), which may differ from real AWS enforcement. Tests may pass locally but fail on real AWS. |
 | **No real Lambda cold starts** | Lambda execution in Floci uses Docker-in-Docker, which doesn't simulate real cold start latency or Lambda service concurrency limits. |
 | **Single-region only** | The architecture assumes a single AWS region. Cross-region replication and multi-region failover are not addressed. |
 | **No TLS termination** | The backend serves plain HTTP. A production deployment would require a reverse proxy (nginx) or ALB for TLS. |
@@ -167,7 +167,7 @@ This separation follows the **Dependency Inversion Principle** — high-level mo
 
 The `lambda/handler.py` file serves two simultaneous roles:
 
-1. **Lambda Function** — `lambda_handler(event, context)` processes SQS record batches with `ReportBatchItemFailures` support. Failed SQS messages are returned to the queue for retry, and successful ones are deleted. The processor is initialized once at module level (`_lambda_processor`) to reuse connections on *warm starts*.
+1. **Lambda Function** — `lambda_handler(event, context)` processes SQS record batches with `ReportBatchItemFailures` support. Failed SQS messages (including `DocumentNotFoundError` for non-existent documents) are returned to the queue for retry, and successful ones are deleted. After `maxReceiveCount` failures, SQS moves the message to the DLQ. The processor is initialized once at module level (`_lambda_processor`) to reuse connections on *warm starts*.
 
 2. **Polling Worker** — `SqsWorker` runs a continuous polling loop with `receive_message`, a health check server on port 8080, and graceful shutdown via SIGTERM/SIGINT signals. Activatable with `--poll` or `--once`.
 
@@ -228,9 +228,10 @@ The document lifecycle implements an explicit state machine:
 ```text
 CREATED → PROCESSING → PROCESSED
     └→ FAILED (on error)
+    └→ DLQ (after maxReceiveCount retries)
 ```
 
-Idempotency is achieved at multiple levels. In `DocumentProcessor.process()` (`lambda/handler.py:110-154`), the first step is to verify the document's current status: if it's already `PROCESSED`, `"skipped"` is returned immediately. This prevents reprocessing even if the SQS message arrives multiple times.
+Idempotency is achieved at multiple levels. In `DocumentProcessor.process()` (`lambda/handler.py:118-162`), the first step is to verify the document exists in DynamoDB: if not, `DocumentNotFoundError` is raised, causing the message to be retried and eventually moved to the DLQ after `maxReceiveCount` failures. If the document exists and is already `PROCESSED`, `"skipped"` is returned immediately. This prevents reprocessing even if the SQS message arrives multiple times.
 
 The `CREATED → PROCESSING` transition occurs under the distributed lock, guaranteeing that only one worker performs the transition. If processing fails, `FAILED` is set and the lock is released. Cleanup in `DocumentService.create_document()` (`backend/app/services/documents.py:87-122`) is also idempotent: if SQS fails after saving to S3/DynamoDB, both stores are cleaned up before propagating the error.
 
@@ -363,6 +364,10 @@ sequenceDiagram
 
     alt Document already processed
         L-->>L: ⏭️ Skip (idempotent)
+    else Document not found
+        L-->>L: ❌ Raise DocumentNotFoundError
+        L-->>SQS: Return to queue (batchItemFailures)
+        SQS-.->DLQ: Move after maxReceiveCount retries
     else Lock held by another worker
         L-->>L: ⏸️ Defer (return to queue)
     else Lock expired (>300s)
@@ -634,12 +639,16 @@ POST /documents {name, content}
 
 SQS → Lambda (async)
   ├── 1. GetItem from DynamoDB
-  ├── 2. Check idempotency (skip if PROCESSED)
-  ├── 3. Acquire distributed lock (conditional write)
-  ├── 4. Update status → PROCESSING
-  ├── 5. GetObject from S3
-  ├── 6. Update status → PROCESSED + size + processed_at
-  └── 7. Release lock
+  ├── 2. Check document exists (raise DocumentNotFoundError if missing)
+  ├── 3. Check idempotency (skip if PROCESSED)
+  ├── 4. Acquire distributed lock (conditional write)
+  ├── 5. Update status → PROCESSING
+  ├── 6. GetObject from S3
+  ├── 7. Update status → PROCESSED + size + processed_at
+  └── 8. Release lock
+
+On failure (missing doc, S3 error, lock contention):
+  → Return batchItemFailures → SQS retries → DLQ after maxReceiveCount=3
 ```
 
 ### 🖥️ Local Console (Floci UI)

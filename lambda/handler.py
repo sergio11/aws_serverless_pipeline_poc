@@ -24,6 +24,15 @@ MAX_LOCK_AGE_SECONDS = int(os.getenv("MAX_LOCK_AGE_SECONDS", "300"))
 _shutdown_event = threading.Event()
 
 
+class DocumentNotFoundError(Exception):
+    """Raised when a document_id references a non-existent DynamoDB item.
+
+    This is a terminal error — the message will be retried by SQS and
+    eventually moved to the DLQ after maxReceiveCount failures, because
+    a missing document cannot become valid through retries.
+    """
+
+
 def _handle_signal(signum: int, frame: Any) -> None:  # pragma: no cover
     log_event(logging.INFO, "shutdown_signal_received", signal=signum)
     _shutdown_event.set()
@@ -110,8 +119,10 @@ class DocumentProcessor:
     def process(self, document_id: str) -> str:
         item = self._get_document(document_id)
         if item is None:
-            log_event(logging.INFO, "document_missing", document_id=document_id)
-            return "missing"
+            log_event(logging.WARNING, "document_missing", document_id=document_id)
+            raise DocumentNotFoundError(
+                f"Document {document_id} not found in DynamoDB"
+            )
 
         if item.get("status") == DocumentStatus.PROCESSED:
             log_event(logging.INFO, "document_already_processed", document_id=document_id)

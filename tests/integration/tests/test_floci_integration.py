@@ -177,11 +177,12 @@ class TestSQSIntegration:
         assert response.get("Messages", []) == []
 
     def test_dlq_redrive(self):
-        """Verify messages that fail processing land in the DLQ.
+        """Verify that SQS redrive policy moves messages to the DLQ after maxReceiveCount.
 
-        Sends a message with a non-existent document_id to the main queue.
-        The worker should fail to process it and, after retries, the message
-        should land in the DLQ.
+        Simulates a worker that repeatedly fails to process a message by receiving
+        it without deleting. After maxReceiveCount (3) failed receives, SQS should
+        automatically move the message to the DLQ. This tests the redrive policy
+        configuration without depending on the Lambda ESM being active.
         """
         sqs = boto3.client("sqs", **_aws_config())
 
@@ -193,6 +194,7 @@ class TestSQSIntegration:
             QueueUrl=queue_url, AttributeNames=["RedrivePolicy"]
         )
         redrive_policy = json.loads(queue_attrs["Attributes"]["RedrivePolicy"])
+        max_receive_count = redrive_policy["maxReceiveCount"]
         assert redrive_policy["deadLetterTargetArn"]
 
         invalid_doc_id = f"nonexistent-{ULID()}"
@@ -202,21 +204,33 @@ class TestSQSIntegration:
         })
         sqs.send_message(QueueUrl=queue_url, MessageBody=message_body)
 
-        deadline = time.monotonic() + 60
-        dlq_message_found = False
-        while time.monotonic() < deadline:
+        for attempt in range(max_receive_count):
             response = sqs.receive_message(
-                QueueUrl=dlq_url, MaxNumberOfMessages=10, WaitTimeSeconds=5
+                QueueUrl=queue_url, MaxNumberOfMessages=1, WaitTimeSeconds=2
             )
             messages = response.get("Messages", [])
-            for msg in messages:
-                body = json.loads(msg["Body"])
-                if body.get("document_id") == invalid_doc_id:
-                    dlq_message_found = True
-                    break
-            if dlq_message_found:
-                break
+            assert messages, f"Expected message on attempt {attempt + 1}/{max_receive_count}"
+            body = json.loads(messages[0]["Body"])
+            assert body.get("document_id") == invalid_doc_id
+
+            sqs.change_message_visibility(
+                QueueUrl=queue_url,
+                ReceiptHandle=messages[0]["ReceiptHandle"],
+                VisibilityTimeout=0,
+            )
+
+        time.sleep(2)
+
+        dlq_response = sqs.receive_message(
+            QueueUrl=dlq_url, MaxNumberOfMessages=10, WaitTimeSeconds=5
+        )
+        dlq_messages = dlq_response.get("Messages", [])
+        dlq_message_found = any(
+            json.loads(msg["Body"]).get("document_id") == invalid_doc_id
+            for msg in dlq_messages
+        )
 
         assert dlq_message_found, (
-            f"Message with document_id={invalid_doc_id} did not land in DLQ within timeout"
+            f"Message with document_id={invalid_doc_id} did not land in DLQ "
+            f"after {max_receive_count} failed receives"
         )

@@ -12,7 +12,7 @@ from conftest import (
     FakeTable,
     make_queue_does_not_exist_error,
 )
-from handler import DocumentProcessor, DocumentStatus, SqsWorker
+from handler import DocumentNotFoundError, DocumentProcessor, DocumentStatus, SqsWorker
 
 
 def test_processor_marks_document_processed() -> None:
@@ -49,13 +49,13 @@ def test_processor_skips_already_processed_document() -> None:
     assert table.updates == []
 
 
-def test_processor_returns_missing_for_nonexistent_document() -> None:
+def test_processor_raises_on_nonexistent_document() -> None:
     table = FakeTable(None)
     processor = DocumentProcessor(FakeS3Client(), FakeDynamoResource(table), "documents")
 
-    result = processor.process("doc-missing")
+    with pytest.raises(DocumentNotFoundError, match="doc-missing"):
+        processor.process("doc-missing")
 
-    assert result == "missing"
     assert table.updates == []
 
 
@@ -358,10 +358,11 @@ def test_lambda_handler_batch_with_partial_failure():
     assert len(result["results"]) == 3
     assert result["results"][0]["result"] == "processed"
     assert result["results"][1]["error"] == "invalid_record"
-    assert result["results"][2]["result"] == "missing"
+    assert "error" in result["results"][2]
     assert "batchItemFailures" in result
-    assert len(result["batchItemFailures"]) == 1
+    assert len(result["batchItemFailures"]) == 2
     assert result["batchItemFailures"][0]["itemIdentifier"] == "msg-2"
+    assert result["batchItemFailures"][1]["itemIdentifier"] == "msg-3"
 
 
 def test_lambda_handler_returns_batch_item_failures_for_errors():
@@ -753,6 +754,24 @@ def test_sqs_worker_does_not_delete_on_processor_exception() -> None:
             {
                 "Body": '{"event_type":"DocumentCreated","document_id":"doc-1"}',
                 "ReceiptHandle": "receipt-error",
+            }
+        ]
+    )
+    worker = SqsWorker(sqs, "document-events", processor)
+
+    processed_count = worker.run_once()
+
+    assert processed_count == 1
+    assert sqs.deleted == []
+
+
+def test_sqs_worker_does_not_delete_on_document_not_found() -> None:
+    processor = DocumentProcessor(FakeS3Client(), FakeDynamoResource(FakeTable(None)), "documents")
+    sqs = FakeSqsClient(
+        [
+            {
+                "Body": '{"event_type":"DocumentCreated","document_id":"doc-missing"}',
+                "ReceiptHandle": "receipt-missing",
             }
         ]
     )

@@ -11,11 +11,14 @@ provider "aws" {
   skip_region_validation = true
 
   endpoints {
-    dynamodb = var.aws_endpoint
-    iam      = var.aws_endpoint
-    lambda   = var.aws_endpoint
-    s3       = var.aws_endpoint
-    sqs      = var.aws_endpoint
-    sts      = var.aws_endpoint
+    cloudwatch = var.aws_endpoint
+    dynamodb   = var.aws_endpoint
+    events     = var.aws_endpoint
+    iam        = var.aws_endpoint
+    lambda     = var.aws_endpoint
+    s3         = var.aws_endpoint
+    scheduler  = var.aws_endpoint
+    sqs        = var.aws_endpoint
+    sts        = var.aws_endpoint
   }
 }

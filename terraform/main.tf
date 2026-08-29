@@ -10,6 +10,7 @@ resource "aws_s3_object" "lambda_zip" {
   bucket = module.storage.bucket_name
   key    = local.lambda_s3_key
   source = "/workspace/tmp/lambda/worker.zip"
+  etag   = filemd5("/workspace/tmp/lambda/worker.zip")
 
   depends_on = [module.storage]
 }
@@ -74,5 +75,16 @@ module "compute" {
     DYNAMODB_TABLE     = local.table_name
     SQS_QUEUE_NAME     = local.queue_name
   }
+
+  reconciler_function_name = local.reconciler_function_name
+  reconciler_handler       = local.reconciler_handler
+  reconciler_environment_variables = {
+    AWS_ENDPOINT_URL           = var.lambda_aws_endpoint_url
+    AWS_DEFAULT_REGION         = var.aws_region
+    DYNAMODB_TABLE             = local.table_name
+    SQS_QUEUE_NAME             = local.queue_name
+    RECONCILER_MAX_AGE_MINUTES = "10"
+  }
+
   tags = local.common_tags
 }

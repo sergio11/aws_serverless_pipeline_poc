@@ -12,6 +12,9 @@ locals {
   lambda_timeout       = 30
   lambda_memory_size   = 128
 
+  reconciler_function_name = "${local.name_prefix}-document-reconciler"
+  reconciler_handler       = "reconciler.handler"
+
   common_tags = {
     Project     = var.project_name
     Environment = var.environment

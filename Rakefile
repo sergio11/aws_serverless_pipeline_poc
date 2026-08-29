@@ -217,6 +217,7 @@ namespace :infra do
         "import zipfile, pathlib; " \
         "z = zipfile.ZipFile('../tmp/lambda/worker.zip', 'w', zipfile.ZIP_DEFLATED); " \
         "z.write('handler.py', 'handler.py'); " \
+        "z.write('reconciler.py', 'reconciler.py'); " \
         "[z.write(str(p), str(p)) for p in pathlib.Path('vendor').rglob('*') if p.is_file()]; " \
         "z.close()"
       )
@@ -306,14 +307,6 @@ namespace :backend do
 end
 
 namespace :reconciler do
-  task :build do
-    run_command("podman-compose", "-f", COMPOSE_FILE, "build", "reconciler-worker")
-  end
-
-  task :start do
-    run_command("podman-compose", "-f", COMPOSE_FILE, "up", "-d", "reconciler-worker")
-  end
-
   task :build_test do
     run_command("podman", "build", "-t", "aws-local-poc_lambda:test", "--target", "test", "./lambda")
   end
@@ -390,7 +383,7 @@ end
 
 namespace :services do
   task :logs do
-    [FLOCI_CONTAINER, BACKEND_CONTAINER, "poc-reconciler-worker", UI_CONTAINER].each do |container|
+    [FLOCI_CONTAINER, BACKEND_CONTAINER, UI_CONTAINER].each do |container|
       puts "--- #{container} ---"
       system("podman", "logs", "--tail", "50", container)
       puts
@@ -418,8 +411,8 @@ namespace :doctor do
   end
 end
 
-desc "Start local environment (Floci + Infra + Backend + Reconciler + UI)"
-task up: ["infra:deploy", "backend:start", "reconciler:start", "ui:start"]
+desc "Start local environment (Floci + Infra + Backend + UI)"
+task up: ["infra:deploy", "backend:start", "ui:start"]
 
 desc "Stop and destroy all services"
 task down: ["floci:stop", "floci:start", "infra:destroy", "floci:clean_data", "floci:stop"]

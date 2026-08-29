@@ -64,3 +64,27 @@ variable "tags" {
   description = "Tags applied to supported resources."
   default     = {}
 }
+
+variable "reconciler_function_name" {
+  type        = string
+  description = "Name of the reconciler Lambda function."
+  default     = ""
+}
+
+variable "reconciler_handler" {
+  type        = string
+  description = "Handler for the reconciler Lambda function."
+  default     = "reconciler.handler"
+}
+
+variable "reconciler_schedule_expression" {
+  type        = string
+  description = "Schedule expression for the reconciler Lambda."
+  default     = "rate(5 minutes)"
+}
+
+variable "reconciler_environment_variables" {
+  type        = map(string)
+  description = "Environment variables for the reconciler Lambda function."
+  default     = {}
+}

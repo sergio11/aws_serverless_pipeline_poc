@@ -11,8 +11,13 @@ from typing import Any
 import boto3
 from botocore.exceptions import ClientError
 
+from shared.constants import DOCUMENT_CREATED_EVENT
+from shared.domain import DocumentStatus
+from shared.logging import create_log_event
+
+log_event = create_log_event("reconciler")
+
 logger = logging.getLogger("reconciler")
-logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 _shutdown_event = threading.Event()
 
@@ -43,17 +48,6 @@ def _start_health_server(port: int = 8081) -> None:  # pragma: no cover
     thread.start()
 
 
-def log_event(level: int, event: str, **fields: Any) -> None:
-    payload = {
-        "timestamp": datetime.now(UTC).isoformat(),
-        "level": logging.getLevelName(level),
-        "service": "reconciler",
-        "event": event,
-        **fields,
-    }
-    logger.log(level, json.dumps(payload, default=str))
-
-
 def scan_stale_documents(table: Any, max_age_minutes: int) -> list[dict]:
     cutoff = datetime.now(UTC) - timedelta(minutes=max_age_minutes)
     stale: list[dict] = []
@@ -63,8 +57,8 @@ def scan_stale_documents(table: Any, max_age_minutes: int) -> list[dict]:
         kwargs: dict = {"FilterExpression": "#s = :created OR #s = :processing"}
         kwargs["ExpressionAttributeNames"] = {"#s": "status"}
         kwargs["ExpressionAttributeValues"] = {
-            ":created": "created",
-            ":processing": "processing",
+            ":created": DocumentStatus.CREATED,
+            ":processing": DocumentStatus.PROCESSING,
         }
         if last_key:
             kwargs["ExclusiveStartKey"] = last_key
@@ -82,7 +76,7 @@ def scan_stale_documents(table: Any, max_age_minutes: int) -> list[dict]:
 
 
 def send_requeue_message(sqs: Any, queue_url: str, document_id: str) -> None:
-    message = {"event_type": "DocumentCreated", "document_id": document_id}
+    message = {"event_type": DOCUMENT_CREATED_EVENT, "document_id": document_id}
     sqs.send_message(QueueUrl=queue_url, MessageBody=json.dumps(message))
     log_event(logging.INFO, "document_requeued", document_id=document_id)
 
@@ -93,7 +87,7 @@ def reset_processing_lock(table: Any, document_id: str) -> bool:
             Key={"id": document_id},
             UpdateExpression="SET #s = :created REMOVE processing_owner, processing_started_at",
             ExpressionAttributeNames={"#s": "status"},
-            ExpressionAttributeValues={":created": "created"},
+            ExpressionAttributeValues={":created": DocumentStatus.CREATED},
         )
         log_event(logging.INFO, "lock_reset", document_id=document_id)
         return True
@@ -133,7 +127,7 @@ def run_reconciliation(config: dict, table_name: str, queue_name: str,
         status = item["status"]
 
         lock_reset = True
-        if status == "processing":
+        if status == DocumentStatus.PROCESSING:
             lock_reset = reset_processing_lock(table, doc_id)
 
         if lock_reset:

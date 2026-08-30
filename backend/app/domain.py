@@ -1,13 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime
-from enum import StrEnum
 
-
-class DocumentStatus(StrEnum):
-    CREATED = "created"
-    PROCESSING = "processing"
-    PROCESSED = "processed"
-    FAILED = "failed"
+from shared.domain import DocumentStatus
 
 
 @dataclass(frozen=True)

@@ -21,7 +21,10 @@ test = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = [".", ".."]
+
+[tool.setuptools]
+packages = ["app"]
 
 [tool.coverage.run]
 source = ["app"]

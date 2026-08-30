@@ -5,10 +5,7 @@ from ulid import ULID
 
 from app.domain import Document, DocumentStatus
 from app.logging import log_event
-
-
-class DocumentNotFoundError(Exception):
-    pass
+from shared.exceptions import DocumentNotFoundError
 
 
 class DocumentInfrastructureError(Exception):

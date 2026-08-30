@@ -9,6 +9,7 @@ from botocore.exceptions import ClientError
 
 from app.domain import Document, DocumentStatus
 from app.settings import Settings
+from shared.constants import DOCUMENT_CREATED_EVENT
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +108,7 @@ class AwsDocumentStore:
 
     def publish_created(self, document_id: str) -> None:
         message = {
-            "event_type": "DocumentCreated",
+            "event_type": DOCUMENT_CREATED_EVENT,
             "document_id": document_id,
         }
         self._get_sqs().send_message(

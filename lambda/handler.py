@@ -8,29 +8,22 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import StrEnum
 from typing import Any
 
 import boto3
 from botocore.exceptions import ClientError, EndpointConnectionError
 
-# SYNC: The log_event function below is duplicated in backend/app/logging.py
-# Changes to log format must be applied to both files.
+from shared.constants import DOCUMENT_CREATED_EVENT, DEFAULT_TABLE_NAME, DEFAULT_QUEUE_NAME, DEFAULT_AWS_REGION, DEFAULT_ENDPOINT_URL
+from shared.domain import DocumentStatus
+from shared.exceptions import DocumentNotFoundError
+from shared.logging import create_log_event
+
+log_event = create_log_event("lambda-worker")
 
 logger = logging.getLogger("lambda-worker")
-logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 MAX_LOCK_AGE_SECONDS = int(os.getenv("MAX_LOCK_AGE_SECONDS", "300"))
 _shutdown_event = threading.Event()
-
-
-class DocumentNotFoundError(Exception):
-    """Raised when a document_id references a non-existent DynamoDB item.
-
-    This is a terminal error — the message will be retried by SQS and
-    eventually moved to the DLQ after maxReceiveCount failures, because
-    a missing document cannot become valid through retries.
-    """
 
 
 def _handle_signal(signum: int, frame: Any) -> None:  # pragma: no cover
@@ -59,30 +52,6 @@ def _start_health_server(port: int = 8080) -> None:  # pragma: no cover
     thread.start()
 
 
-def log_event(level: int, event: str, **fields: Any) -> None:
-    payload = {
-        "timestamp": datetime.now(UTC).isoformat(),
-        "level": logging.getLevelName(level),
-        "service": "lambda-worker",
-        "event": event,
-        **fields,
-    }
-    logger.log(level, json.dumps(payload, default=str))
-
-
-# CRITICAL: This enum MUST stay synchronized with backend/app/domain.py:DocumentStatus.
-# Both files define identical states. If adding new states, update BOTH files.
-# The values must match exactly because they are stored in DynamoDB and compared
-# across services. To verify synchronization, run:
-#   diff <(python -c "from backend.app.domain import DocumentStatus; print(list(DocumentStatus))") \
-#        <(python -c "import sys; sys.path.insert(0,'lambda'); from handler import DocumentStatus; print(list(DocumentStatus))")
-class DocumentStatus(StrEnum):
-    CREATED = "created"
-    PROCESSING = "processing"
-    PROCESSED = "processed"
-    FAILED = "failed"
-
-
 @dataclass(frozen=True)
 class WorkerSettings:
     aws_endpoint_url: str
@@ -96,12 +65,12 @@ class WorkerSettings:
     @classmethod
     def from_environment(cls) -> "WorkerSettings":  # pragma: no cover
         return cls(
-            aws_endpoint_url=os.getenv("AWS_ENDPOINT_URL", "http://localhost:4566"),
-            aws_region=os.getenv("AWS_DEFAULT_REGION", "eu-west-1"),
+            aws_endpoint_url=os.getenv("AWS_ENDPOINT_URL", DEFAULT_ENDPOINT_URL),
+            aws_region=os.getenv("AWS_DEFAULT_REGION", DEFAULT_AWS_REGION),
             aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
             aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
-            dynamodb_table=os.getenv("DYNAMODB_TABLE", "documents-metadata"),
-            sqs_queue_name=os.getenv("SQS_QUEUE_NAME", "document-events"),
+            dynamodb_table=os.getenv("DYNAMODB_TABLE", DEFAULT_TABLE_NAME),
+            sqs_queue_name=os.getenv("SQS_QUEUE_NAME", DEFAULT_QUEUE_NAME),
             poll_interval_seconds=int(os.getenv("WORKER_POLL_INTERVAL_SECONDS", "2")),
         )
 
@@ -283,7 +252,7 @@ class SqsWorker:
             self._delete_message(message)
             return
 
-        if payload.get("event_type") != "DocumentCreated":
+        if payload.get("event_type") != DOCUMENT_CREATED_EVENT:
             log_event(logging.INFO, "unsupported_event", event_type=payload.get("event_type"))
             self._delete_message(message)
             return
@@ -378,7 +347,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             batch_item_failures.append({"itemIdentifier": message_id})
             continue
 
-        if payload.get("event_type") == "DocumentCreated":
+        if payload.get("event_type") == DOCUMENT_CREATED_EVENT:
             try:
                 result = processor.process(payload["document_id"])
             except Exception as exc:
@@ -449,7 +418,7 @@ def main() -> None:  # pragma: no cover
         test_event = {
             "Records": [{
                 "body": json.dumps({
-                    "event_type": "DocumentCreated",
+                    "event_type": DOCUMENT_CREATED_EVENT,
                     "document_id": os.environ.get("TEST_DOCUMENT_ID", "test-doc")
                 })
             }]

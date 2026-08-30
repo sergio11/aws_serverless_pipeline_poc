@@ -211,6 +211,7 @@ namespace :infra do
     run_command("python", "-m", "pip", "install", "-q", "-t", vendor_dir, "-r",
                 File.join(ROOT_PATH, "lambda", "requirements.txt"))
 
+    shared_dir = File.join(ROOT_PATH, "shared")
     lambda_dir = File.join(ROOT_PATH, "lambda")
     Dir.chdir(lambda_dir) do
       run_command("python", "-c",
@@ -218,6 +219,7 @@ namespace :infra do
         "z = zipfile.ZipFile('../tmp/lambda/worker.zip', 'w', zipfile.ZIP_DEFLATED); " \
         "z.write('handler.py', 'handler.py'); " \
         "z.write('reconciler.py', 'reconciler.py'); " \
+        "[z.write(str(p), 'shared/' + str(p.relative_to('#{shared_dir.gsub('\\', '/')}'))) for p in pathlib.Path('#{shared_dir.gsub('\\', '/')}').rglob('*') if p.is_file()]; " \
         "[z.write(str(p), str(p)) for p in pathlib.Path('vendor').rglob('*') if p.is_file()]; " \
         "z.close()"
       )
@@ -294,13 +296,12 @@ namespace :backend do
   end
 
   task :build_test do
-    run_command("podman", "build", "-t", "aws-local-poc_backend:test", "--target", "test", "./backend")
+    run_command("podman", "build", "-t", "aws-local-poc_backend:test", "--target", "test", "--file", "backend/Containerfile", ".")
   end
 
   task test: :build_test do
     run_command("podman", "run", "--rm",
                 "--tmpfs", "/tmp",
-                "-v", "#{ROOT_PATH}/lambda/handler.py:/lambda/handler.py:ro",
                 "aws-local-poc_backend:test",
                 "pytest", "tests", "--cov=app", "--cov-report=term-missing", "--cov-fail-under=98")
   end
@@ -308,7 +309,7 @@ end
 
 namespace :reconciler do
   task :build_test do
-    run_command("podman", "build", "-t", "aws-local-poc_lambda:test", "--target", "test", "./lambda")
+    run_command("podman", "build", "-t", "aws-local-poc_lambda:test", "--target", "test", "--file", "lambda/Containerfile", ".")
   end
 
   task test: :build_test do
@@ -321,7 +322,7 @@ end
 
 namespace :lambda do
   task :build_test do
-    run_command("podman", "build", "-t", "aws-local-poc_lambda:test", "--target", "test", "./lambda")
+    run_command("podman", "build", "-t", "aws-local-poc_lambda:test", "--target", "test", "--file", "lambda/Containerfile", ".")
   end
 
   task test: :build_test do
@@ -365,6 +366,7 @@ namespace :e2e do
            "-e", "AWS_ACCESS_KEY_ID=test",
            "-e", "AWS_SECRET_ACCESS_KEY=test",
            "-v", "#{ROOT_PATH}/lambda/reconciler.py:/app/lambda/reconciler.py:ro",
+           "-v", "#{ROOT_PATH}/shared:/app/shared:ro",
            "aws-local-poc_e2e", "pytest", "tests", "-v"]
     run_command(*cmd)
   end

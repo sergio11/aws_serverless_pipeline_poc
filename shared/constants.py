@@ -1,0 +1,5 @@
+DOCUMENT_CREATED_EVENT = "DocumentCreated"
+DEFAULT_TABLE_NAME = "documents-metadata"
+DEFAULT_QUEUE_NAME = "document-events"
+DEFAULT_AWS_REGION = "eu-west-1"
+DEFAULT_ENDPOINT_URL = "http://localhost:4566"

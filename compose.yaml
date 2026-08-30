@@ -98,8 +98,8 @@ services:
 
   backend:
     build:
-      context: ./backend
-      dockerfile: Containerfile
+      context: .
+      dockerfile: backend/Containerfile
     container_name: poc-backend
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     restart: unless-stopped

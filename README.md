@@ -138,7 +138,6 @@ The implementation in `documents.py:88` is trivial: `document_id = str(ULID())`.
 | **Single-region only** | The architecture assumes a single AWS region. Cross-region replication and multi-region failover are not addressed. |
 | **No TLS termination** | The backend serves plain HTTP. A production deployment would require a reverse proxy (nginx) or ALB for TLS. |
 | **Stateful Terraform** | State is stored in a Podman volume (`terraform-workdir`). Production should use S3 + DynamoDB for remote state with locking. |
-| **DocumentStatus duplication** | The `DocumentStatus` enum is duplicated between `backend/app/domain.py` and `lambda/handler.py` with sync verification tests — a pragmatic tradeoff for Lambda packaging simplicity. |
 | **Docker socket exposure** | The `/var/run/docker.sock` mount grants full Docker daemon control to the Floci container. Required for Lambda simulation but insecure for production. |
 | **No CI/CD pipeline** | While Rake replicates CI validations locally, no GitHub Actions or external pipeline is configured. Validation depends on running `rake test` manually. |
 
@@ -956,14 +955,21 @@ rake logs
 │   │   ├── main.py                   # App factory (create_app)
 │   │   ├── settings.py               # Environment-based configuration
 │   │   ├── schemas.py                # Pydantic request/response models
-│   │   ├── domain.py                 # Document domain model + status enum
-│   │   ├── logging.py                # Structured JSON logging
+│   │   ├── domain.py                 # Document domain model (imports from shared)
+│   │   ├── logging.py                # Structured JSON logging (imports from shared)
 │   │   ├── api/
 │   │   │   └── routes.py             # HTTP route handlers
 │   │   └── services/
 │   │       ├── aws.py                # AWS (boto3) document store adapter
 │   │       └── documents.py          # Document service + Protocol
 │   └── tests/                        # Unit tests (98%+ coverage)
+│
+├── shared/                           # Shared types and utilities
+│   ├── __init__.py                   # Public API re-exports
+│   ├── domain.py                     # DocumentStatus enum (single source of truth)
+│   ├── logging.py                    # Structured JSON logging factory
+│   ├── exceptions.py                 # DocumentNotFoundError
+│   └── constants.py                  # Shared constants (event types, defaults)
 │
 ├── lambda/                           # Lambda functions (dual architecture)
 │   ├── Containerfile                 # Multi-stage container build

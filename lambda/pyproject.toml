@@ -19,7 +19,7 @@ test = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = [".", ".."]
 
 [tool.coverage.run]
 source = ["handler", "reconciler"]

@@ -44,6 +44,10 @@ This POC is designed to demonstrate and validate cloud-grade architecture patter
 
 - 📊 **Observability (CloudWatch Dashboards + Alarms)** — Centralized dashboard with SQS depth, Lambda errors/throttles, and DLQ depth metrics, backed by 4 configured alarms and SNS notifications for proactive alerting.
 
+## More Details 📝
+
+For comprehensive information about this project, check out this [Medium article](https://medium.com/@sanchezsanchezsergio418/aws-serverless-pipeline-event-driven-processing-scheduled-reconciliation-and-modular-terraform-4dca21f982db).
+
 ## 🚀 Why This Stack?
 
 ### 🐍 Python + FastAPI

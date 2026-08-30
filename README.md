@@ -22,11 +22,7 @@ Built with Python, FastAPI, Terraform, and Podman, this project demonstrates tha
 | **Observability** | CloudWatch dashboard with 4 metric alarms and SNS notifications |
 | **Container Security** | Rootless Podman, no-new-privileges, tmpfs, resource limits per service |
 
----
-
 [🏛️ Architecture](#%EF%B8%8F-architecture) · [🧭 Design Decisions](#-design-decisions) · [🚀 Why This Stack?](#-why-this-stack) · [💪 Strengths & Weaknesses](#-strengths--weaknesses) · [✨ Features](#-features) · [⚙️ Configuration](#-configuration) · [🧪 Testing](#-testing) · [🎬 Quick Start](#-quick-start) · [📁 Project Structure](#-project-structure) · [🔧 Rake Commands](#-rake-commands)
-
----
 
 ## 🏛️ Architecture Overview
 
@@ -47,8 +43,6 @@ This POC is designed to demonstrate and validate cloud-grade architecture patter
 - 🐳 **Containerized Workflows (Podman)** — Complete orchestration via Podman Compose with 4 core runtime services (`floci`, `floci-ui`, `terraform`, `backend`), ephemeral test execution, and security hardening (rootless, no-new-privileges).
 
 - 📊 **Observability (CloudWatch Dashboards + Alarms)** — Centralized dashboard with SQS depth, Lambda errors/throttles, and DLQ depth metrics, backed by 4 configured alarms and SNS notifications for proactive alerting.
-
----
 
 ## 🚀 Why This Stack?
 
@@ -108,8 +102,6 @@ Second, ULIDs are **collision-free** and **time-ordered**: each ID incorporates 
 
 The implementation in `documents.py:88` is trivial: `document_id = str(ULID())`. No namespace configuration, no synchronized clock dependencies, no practical collision risk. It's the correct choice for entity identifiers in a system combining DynamoDB (order matters) and S3 (paths matter).
 
----
-
 ## 💪 Strengths & Weaknesses
 
 ### ✅ Strengths
@@ -142,7 +134,6 @@ The implementation in `documents.py:88` is trivial: `document_id = str(ULID())`.
 | **Docker socket exposure** | The `/var/run/docker.sock` mount grants full Docker daemon control to the Floci container. Required for Lambda simulation but insecure for production. |
 | **No CI/CD pipeline** | While Rake replicates CI validations locally, no GitHub Actions or external pipeline is configured. Validation depends on running `rake test` manually. |
 
----
 
 ## 🧭 Design Decisions
 
@@ -166,7 +157,6 @@ class DocumentStore(Protocol):
 
 This separation follows the **Dependency Inversion Principle** — high-level modules don't depend on low-level modules; both depend on abstractions. The result is a service layer testable at 98%+ without AWS mocks.
 
----
 
 ### ⚡ Dual Lambda Architecture
 
@@ -178,7 +168,6 @@ The `lambda/` directory contains two distinct Lambda functions serving complemen
 
 Both functions share the same container image and DynamoDB table, but serve different purposes: the Document Processor handles the happy path (event-driven), while the Reconciler handles failure recovery (scheduled reconciliation).
 
----
 
 ### 🔒 Distributed Lock via DynamoDB
 
@@ -198,7 +187,6 @@ ConditionExpression="processing_owner = :owner"
 
 Additionally, expired lock detection (`MAX_LOCK_AGE_SECONDS = 300`) is implemented: if a lock is older than 5 minutes, any worker can force its release using `_force_release_expired_lock`, preventing documents from being permanently blocked by dead workers.
 
----
 
 ### 📦 Container Topology and Ephemeral Test Execution
 
@@ -209,7 +197,6 @@ The `compose.yaml` is streamlined to contain only the **4 core runtime services*
 
 This decoupled design avoids container name collisions, keeps `compose.yaml` maintainable (~150 lines), and ensures tests run in clean, anonymous environments.
 
----
 
 ### 📊 Terraform Module Composition
 
@@ -224,7 +211,6 @@ The three base modules (`storage`, `database`, `messaging`) are instantiated fir
 
 Each module exposes clean outputs (ARNs, names, URLs) that other modules consume. This modular composition means each concern is independently testable and reusable — the `storage` module for example, could be reused in any project needing an S3 bucket with versioning and lifecycle policies.
 
----
 
 ### 🔄 Idempotent Document Processing
 
@@ -242,7 +228,6 @@ The `CREATED → PROCESSING` transition occurs under the distributed lock, guara
 
 Tests explicitly verify these scenarios: already-processed documents are skipped, conflicting locks are returned to the queue, and infrastructure errors trigger correct rollback.
 
----
 
 ## 🏛️ Architecture
 
@@ -341,8 +326,6 @@ graph TB
     style DOCKER_SOCK fill:#FBC02D,color:#000,stroke:#F9A825
 ```
 
----
-
 ### 🔄 Document Flow (Sequence Diagram)
 
 ```mermaid
@@ -412,8 +395,6 @@ sequenceDiagram
     end
 ```
 
----
-
 ### 🔄 Reconciliation Flow (Sequence Diagram)
 
 ```mermaid
@@ -442,8 +423,6 @@ sequenceDiagram
         R-->>EB: Response {reconciled: N}
     end
 ```
-
----
 
 ### 🏗️ Terraform Module Composition
 
@@ -596,8 +575,6 @@ graph TB
     style PORT_EXPOSE fill:#00BCD4,color:#fff,stroke:#00838F
 ```
 
----
-
 ### 🐳 Container Topology
 
 ```mermaid
@@ -651,8 +628,6 @@ graph TB
     style SEC_TMPFS fill:#4CAF50,color:#fff,stroke:#2E7D32
     style SEC_LIMITS fill:#4CAF50,color:#fff,stroke:#2E7D32
 ```
-
----
 
 ## ✨ Features
 
